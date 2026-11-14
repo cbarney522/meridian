@@ -35,7 +35,8 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
-from core import accounts_api  # noqa: E402
+from core import accounts_api, netinfo  # noqa: E402
+from core.readerapi import ReaderApi  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
 
 WWW_DIR = os.path.join(APP_DIR, "www")
@@ -52,6 +53,8 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store",
 }
+READER_API_DEFAULTS = {"username": "root", "password": ""}
+FACTORY_PASSWORD = "impinj"          # R700 factory default; tried only while no password is saved
 STORAGE_DEFAULTS = {"retention_days_events": 90, "retention_days_logs": 30, "alert_free_pct": 10}
 
 
@@ -108,10 +111,70 @@ class App:
 
     def start_watchers(self):
         UsbWatcher(self.sysfs, self.bus.emit).start()
+        threading.Thread(target=self._reader_info_loop, daemon=True, name="reader-info").start()
         if not self.args.no_badges:
             self.badges = BadgeListener(self.sysfs, self.args.dev_root, self.usb_assignments,
                                         self.badge_settings, self.bus.emit)
             self.badges.start()
+
+    # -- reader facts from the Impinj REST API (refreshed in the background every 60 s)
+    def reader_api(self, username=None, password=None):
+        _, cfg = self.store.get("reader_api", READER_API_DEFAULTS)
+        user = username if username is not None else cfg.get("username") or "root"
+        pw = password if password is not None else cfg.get("password") or FACTORY_PASSWORD
+        return ReaderApi(self.args.reader_api, user, pw), not (password or cfg.get("password"))
+
+    def refresh_reader_info(self):
+        api, using_default = self.reader_api()
+        r = api.fetch()
+        r["using_default"] = using_default
+        self.reader_cache = r
+        return r
+
+    def _reader_info_loop(self):
+        self.reader_wake = threading.Event()
+        while True:
+            try:
+                self.refresh_reader_info()
+            except Exception:
+                log.exception("reader info refresh failed")
+            self.reader_wake.wait(60)
+            self.reader_wake.clear()
+
+    def reader_info(self):
+        r = getattr(self, "reader_cache", None) or {"ok": False, "error": "not read yet", "items": {}, "raw": {},
+                                                     "fetched": None, "using_default": True}
+        net = netinfo.summary()
+        _, cfg = self.store.get("reader_api", READER_API_DEFAULTS)
+        return {
+            "hostname": socket.gethostname(),
+            "items": r["items"],
+            "api": {"ok": r["ok"], "error": r["error"], "fetched": r["fetched"], "using_default": r.get("using_default"),
+                    "username": cfg.get("username") or "root", "password_set": bool(cfg.get("password"))},
+            "net": net,
+            "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "timezone": time.strftime("%Z"),
+            "uptime_s": int(read_first("/proc/uptime", float) or 0),
+            "app_version": app_version(),
+        }
+
+    def reader_api_save(self, revision, body):
+        if not isinstance(body, dict):
+            return 400, {"error": "invalid", "details": ["settings must be an object"]}
+        _, cur = self.store.get("reader_api", READER_API_DEFAULTS)
+        user = body.get("username", cur.get("username"))
+        if not isinstance(user, str) or not 0 < len(user) <= 64:
+            return 400, {"error": "invalid", "details": ["Enter the reader's user name."]}
+        pw = cur.get("password", "")
+        if body.get("clear_password"):
+            pw = ""
+        elif isinstance(body.get("password"), str) and body["password"]:
+            pw = body["password"][:256]
+        rev = self.store.put("reader_api", revision, {"username": user, "password": pw})
+        if rev is None:
+            return 409, {"error": "conflict"}
+        if getattr(self, "reader_wake", None):
+            self.reader_wake.set()          # re-read now with the new login
+        return 200, {"ok": True, "revision": rev}
 
     # -- settings sections
     def usb_assignments(self):
@@ -317,6 +380,7 @@ class App:
         return {"diag": read(os.path.join(d, "diag.txt")),
                 "log": read(os.path.join(d, "log", "meridian.log"), log_bytes),
                 "badge_listener": self.badges.status() if self.badges else None,
+                "reader_api_raw": (getattr(self, "reader_cache", None) or {}).get("raw"),
                 "app_version": app_version(), "data_dir": d}
 
     # -- status
@@ -330,9 +394,16 @@ class App:
 
         temp = read_first("/sys/class/thermal/thermal_zone0/temp", int)
         drive = self.storage_snapshot()["drive"]
+        info = self.reader_info()
+        it = info["items"]
         return {
-            "reader": {"name": socket.gethostname(), "serial": None, "site": None, "firmware": None,
+            "reader": {"name": socket.gethostname(), "serial": it.get("serial"), "site": None, "firmware": it.get("firmware"),
                        "app_version": app_version(), "profile": None,
+                       "description": it.get("description"), "region": it.get("region"),
+                       "rfid_interface": it.get("rfid_interface"), "sku": it.get("sku"),
+                       "ipv4": info["net"]["ipv4"], "ipv6": info["net"]["ipv6"], "mac": info["net"]["mac"],
+                       "time": info["time"], "timezone": info["timezone"],
+                       "api_ok": info["api"]["ok"], "api_error": info["api"]["error"],
                        "uptime_s": int(read_first("/proc/uptime", float) or 0), "ntp_synced": self.ntp_synced(),
                        "temp_c": round(temp / 1000, 1) if temp else None},
             "rfid": {"available": False, "running": False, "read_rate": 0, "tags_in_field": 0, "zones": {}},
@@ -499,6 +570,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
             return
+        if p == "/api/reader/info":
+            if self.require("system.view"):
+                self.send_json(APP.reader_info())
+            return
+        if p == "/api/reader/api-settings":
+            if self.require("system.view"):
+                rev, cfg = APP.store.get("reader_api", READER_API_DEFAULTS)
+                self.send_json({"revision": rev, "username": cfg.get("username") or "root",
+                                "password_set": bool(cfg.get("password"))})
+            return
         if p == "/api/storage/browse":
             if self.require("hardware.view"):
                 q = parse_qs(url.query)
@@ -522,6 +603,15 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith("/api/accounts/"):
             return self.accounts("PUT")
+        if p == "/api/reader/api-settings":
+            if not self.require("system.edit"):
+                return
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, 400)
+            status, result = APP.reader_api_save(body.get("revision"), body)
+            return self.send_json(result, status)
         handlers = {
             "/api/usb/assignments": ("hardware.edit", APP.usb_save, "assignments"),
             "/api/badges/settings": ("hardware.edit", APP.badges_save, "settings"),
@@ -566,6 +656,14 @@ class Handler(BaseHTTPRequestHandler):
             APP.sessions.drop_user(self.account["user"], keep=self.token)   # sign out their other sessions
             log.info("%s changed their password", self.account["user"])
             return self.send_json({"ok": True})
+        if p == "/api/reader/api-test":
+            if not self.require("system.edit"):
+                return
+            user = body.get("username") if isinstance(body.get("username"), str) else None
+            pw = body.get("password") if isinstance(body.get("password"), str) and body.get("password") else None
+            api, _ = APP.reader_api(user, pw)
+            r = api.fetch()
+            return self.send_json({"ok": r["ok"], "error": r["error"], "items": r["items"]})
         if p == "/api/badges/preview":
             if not self.require("hardware.view"):
                 return
@@ -676,6 +774,8 @@ def main():
     ap.add_argument("--sysfs", default=os.environ.get("MERIDIAN_SYSFS", "/sys"), help="sysfs root (tests use a fake tree)")
     ap.add_argument("--dev-root", default=os.environ.get("MERIDIAN_DEV_ROOT", ""), help="prefix for /dev paths (tests)")
     ap.add_argument("--proc-mounts", default="/proc/mounts")
+    ap.add_argument("--reader-api", default=os.environ.get("MERIDIAN_READER_API", "https://localhost"),
+                    help="base URL of the reader's Impinj REST API")
     ap.add_argument("--no-badges", action="store_true", help="don't read badge readers")
     ap.add_argument("--insecure-http", action="store_true", help="plain HTTP (bench use only)")
     ap.add_argument("--session-idle", type=int, default=int(os.environ.get("MERIDIAN_SESSION_IDLE_MIN", "30")),

@@ -9,6 +9,7 @@ const EVENT_LABEL = {
 const MAX_EVENTS = 40;
 
 export function render(root, ctx) {
+  const canAbout = ctx.session.permissions.includes("system.view");
   const cards = h("div", { class: "grid" });
   const feed = h("ul", { class: "events" }, h("li", { class: "empty" }, "Waiting for events…"));
   root.append(
@@ -19,7 +20,7 @@ export function render(root, ctx) {
   );
 
   async function refresh() {
-    try { drawCards(cards, await api.status()); }
+    try { drawCards(cards, await api.status(), canAbout); }
     catch (err) { cards.replaceChildren(h("div", { class: "notice bad" }, "Status unavailable: ", String(err.message))); }
   }
 
@@ -37,24 +38,38 @@ export function render(root, ctx) {
   return () => { clearInterval(timer); unsub(); };   // called when leaving the page
 }
 
-function drawCards(root, s) {
+function drawCards(root, s, canAbout) {
   const r = s.reader, f = s.rfid;
   const rfidOn = f.available !== false, mqttOn = s.mqtt.available !== false;
   const maxZone = Math.max(1, ...Object.values(f.zones));
   const v = (x) => (x === null || x === undefined ? h("span", { class: "muted" }, "—") : x);
   const notYet = (what) => h("p", { class: "muted" }, `${what} isn't running in this build yet.`);
+  const apiNote = r.api_ok === false
+    ? h("p", { class: "hint" }, "Impinj details unavailable",
+        canAbout ? [" — ", h("a", { href: "#/system/about" }, "set the reader login")] : null, ".")
+    : null;
   root.replaceChildren(
     h("section", { class: "card" }, h("h2", {}, "Reader"),
       h("dl", { class: "kv" },
         h("dt", {}, "Name"), h("dd", {}, v(r.name)),
+        h("dt", {}, "Model"), h("dd", {}, v(r.description)),
         h("dt", {}, "Serial"), h("dd", {}, v(r.serial)),
         h("dt", {}, "Firmware"), h("dd", {}, v(r.firmware)),
+        h("dt", {}, "Region"), h("dd", {}, v(r.region)),
+        h("dt", {}, "Interface"), h("dd", {}, v(r.rfid_interface)),
         h("dt", {}, "Meridian"), h("dd", {}, v(r.app_version)),
         h("dt", {}, "Profile"), h("dd", {}, v(r.profile)),
         h("dt", {}, "Uptime"), h("dd", {}, uptime(r.uptime_s)),
         h("dt", {}, "Clock"), h("dd", {}, r.ntp_synced === null || r.ntp_synced === undefined
           ? h("span", { class: "pill neutral" }, "Unknown") : pill(r.ntp_synced, "NTP synced", "Not synced")),
-        h("dt", {}, "Temperature"), h("dd", {}, r.temp_c === null || r.temp_c === undefined ? v(null) : `${r.temp_c} °C`))),
+        h("dt", {}, "Temperature"), h("dd", {}, r.temp_c === null || r.temp_c === undefined ? v(null) : `${r.temp_c} °C`)),
+      apiNote),
+    h("section", { class: "card" }, h("h2", {}, "Network"),
+      h("dl", { class: "kv" },
+        h("dt", {}, "IPv4"), h("dd", {}, v(r.ipv4)),
+        h("dt", {}, "IPv6"), h("dd", {}, v(r.ipv6)),
+        h("dt", {}, "MAC"), h("dd", {}, v(r.mac)),
+        h("dt", {}, "Reader time"), h("dd", {}, r.time ? `${r.time.slice(11, 19)} ${r.timezone || ""}` : v(null)))),
     h("section", { class: "card" }, h("h2", {}, "RFID"),
       rfidOn ? [
         h("div", { class: "big" }, f.tags_in_field, h("small", {}, "tags in field")),

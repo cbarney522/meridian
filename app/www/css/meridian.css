@@ -99,6 +99,8 @@ a { color: var(--accent-strong); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-weight: 500; }
+.kv dd { overflow-wrap: anywhere; }
+.notice.wide { grid-column: 1 / -1; }
 .big { font-size: 28px; font-weight: 700; line-height: 1.1; }
 .big small { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 4px; }
 .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
@@ -221,7 +223,7 @@ a { color: var(--accent-strong); }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-weight: 600; font-size: 13px; }
 .field-help { color: var(--muted); font-size: 12px; }
-.field input[type=text], .field input[type=number], .field select, .preview input {
+.field input[type=text], .field input[type=password], .field input[type=number], .field select, .preview input {
   font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
 .field input.mono, .preview input.mono { font-family: var(--mono); font-size: 13px; }
 .field input:disabled, .field select:disabled { background: #f3f5f7; color: var(--muted); }

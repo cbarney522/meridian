@@ -124,7 +124,12 @@ class Sim:
         up = int(time.time() - STARTED) + 282441
         return {
             "reader": {"name": "Crib 2 portal", "serial": "37017090614", "site": "plant-atl",
-                       "firmware": "10.4.0", "app_version": "0.1.0-dev", "profile": "tool-crib-portal",
+                       "firmware": "10.4.0.240", "app_version": "0.1.0-dev", "profile": "tool-crib-portal",
+                       "description": "Impinj R700 RAIN RFID Reader rev 2", "region": "FCC Part 15.247",
+                       "rfid_interface": "Impinj IoT Device Interface", "sku": "IPJ-R700-341",
+                       "ipv4": "192.168.0.188", "ipv6": "2601:c2:f00:4267:738f:d53b:810f:3fdb", "mac": "00:16:25:17:1B:E6",
+                       "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "timezone": time.strftime("%Z"),
+                       "api_ok": True, "api_error": None,
                        "uptime_s": up, "ntp_synced": True, "temp_c": round(41 + random.random() * 2, 1)},
             "rfid": {"running": True, "read_rate": self.read_rate,
                      "tags_in_field": sum(self.zone_counts.values()), "zones": dict(self.zone_counts)},
@@ -508,6 +513,21 @@ def _fake_drive():
 
 FAKE_DRIVE = _fake_drive()
 
+READER_API = {"revision": 0, "username": "root", "password": ""}
+MOCK_ITEMS = {"description": "Impinj R700 RAIN RFID Reader rev 2", "model": None, "sku": "IPJ-R700-341",
+              "hla": "104900-04D", "pcba": "104920-04C", "serial": "37025501450", "firmware": "10.4.0.240",
+              "region": "FCC Part 15.247", "rfid_interface": "Impinj IoT Device Interface"}
+
+
+def mock_reader_info():
+    return {"hostname": "impinj-17-1b-e6", "items": MOCK_ITEMS,
+            "api": {"ok": True, "error": None, "fetched": int(time.time()), "using_default": not READER_API["password"],
+                    "username": READER_API["username"], "password_set": bool(READER_API["password"])},
+            "net": {"interface": "eth0", "mac": "00:16:25:17:1B:E6", "ipv4": "192.168.0.188",
+                    "ipv6": "2601:c2:f00:4267:738f:d53b:810f:3fdb", "ipv6_all": [], "hostname": "impinj-17-1b-e6"},
+            "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "timezone": time.strftime("%Z"),
+            "uptime_s": int(time.time() - STARTED) + 282441, "app_version": "0.1.0-dev"}
+
 
 # ---------------------------------------------------------------- HTTP
 class Handler(SimpleHTTPRequestHandler):
@@ -588,6 +608,15 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("GET")
+        if p == "/api/reader/info":
+            if self.require("system.view"):
+                self.send_json(mock_reader_info())
+            return
+        if p == "/api/reader/api-settings":
+            if self.require("system.view"):
+                self.send_json({"revision": READER_API["revision"], "username": READER_API["username"],
+                                "password_set": bool(READER_API["password"])})
+            return
         if p == "/api/storage/browse":
             if not self.require("hardware.view"):
                 return
@@ -651,6 +680,13 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("POST")
+        if p == "/api/reader/api-test":
+            if not self.require("system.edit"):
+                return
+            body = self.read_json()
+            ok = (body.get("password") or READER_API["password"] or "impinj") == "impinj"
+            return self.send_json({"ok": ok, "error": None if ok else "login rejected (check the reader user name and password)",
+                                   "items": MOCK_ITEMS if ok else {}})
         if p in ("/api/login", "/api/logout"):   # MOCK-ONLY: no real accounts; any sign-in works
             return self.send_json({"ok": True, "must_change_password": False})
         if p == "/api/dev/role":  # MOCK-ONLY role switcher
@@ -713,6 +749,19 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith("/api/accounts/"):
             return self.accounts("PUT")
+        if p == "/api/reader/api-settings":
+            if not self.require("system.edit"):
+                return
+            body = self.read_json()
+            if body.get("revision") != READER_API["revision"]:
+                return self.send_json({"error": "conflict"}, HTTPStatus.CONFLICT)
+            READER_API["username"] = body.get("username") or "root"
+            if body.get("clear_password"):
+                READER_API["password"] = ""
+            elif body.get("password"):
+                READER_API["password"] = body["password"]
+            READER_API["revision"] += 1
+            return self.send_json({"ok": True, "revision": READER_API["revision"]})
         if p == "/api/usb/assignments":
             if not self.require("hardware.edit"):
                 return

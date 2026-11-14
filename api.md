@@ -264,3 +264,14 @@ Always succeed; the mock has no accounts.
 
 ### `POST /api/dev/role` `{"role": "supervisor"}`
 Switches the mock server's current role. Not implemented by the real server.
+
+## Reader details (System › About this reader)
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/reader/info` | system.view | `items` (description, sku, hla, pcba, serial, firmware, region, rfid_interface) from the Impinj REST API; `net` (interface, mac, ipv4, ipv6) from Linux; `time`, `timezone`, `uptime_s`; `api` {ok, error, fetched, username, password_set}. Refreshed every 60 s. |
+| GET | `/api/reader/api-settings` | system.view | `{revision, username, password_set}`. The password is never returned. |
+| PUT | `/api/reader/api-settings` | system.edit | `{revision, username, password?, clear_password?}`. Blank password keeps the saved one. Triggers an immediate re-read. |
+| POST | `/api/reader/api-test` | system.edit | `{username?, password?}` → `{ok, error, items}`. Doesn't save anything. |
+
+Meridian calls `https://localhost/api/v1/system`, `/system/image`, `/system/region` and `/system/rfid/interface` with HTTP Basic auth. Until a password is saved it tries the factory default (`root` / `impinj`). Field names are matched loosely; the raw responses appear under `reader_api_raw` in `/api/diagnostics` (Developer › Debug log). `/api/status` now also carries these fields in `reader`.
