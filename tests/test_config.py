@@ -1,5 +1,6 @@
 """Tests for app/core/config.py and core.inputs.parse_events.   Run:  python3 -m unittest discover tests"""
 import json
+import logging
 import os
 import struct
 import sys
@@ -9,6 +10,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
 from core.config import Store  # noqa: E402
 from core.inputs import parse_events  # noqa: E402
+
+logging.disable(logging.CRITICAL)   # these tests deliberately trigger warnings (corrupt config, default login)
 
 
 class StoreTests(unittest.TestCase):
