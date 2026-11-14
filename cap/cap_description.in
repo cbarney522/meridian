@@ -2,7 +2,7 @@
 [Description]
 
 # 4-part version, each 0-255. build.sh names the .upgx from this and writes it into app/VERSION.
-Version = 0.1.0.7
+Version = 0.1.1.0
 
 # R*** = any reader. Use R700V2 to restrict to v2 hardware (the bundled Python is aarch64 only).
 Valid Reader Hardware = R***
@@ -11,7 +11,7 @@ Valid Reader Hardware = R***
 Input Directory = ./build/cap
 
 # Keep settings, accounts, TLS cert and logs when a newer Meridian is installed over this one.
-# (Path relative to the CAP root. Verify on the first upgrade-over-upgrade, then enable.)
-#Persistent Data = rw_dir
+# (Path relative to the CAP root.) Takes effect for upgrades *from* a build that already has it.
+Persistent Data = rw_dir
 
 Partition Size = 128
