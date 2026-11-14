@@ -292,3 +292,6 @@ a { color: var(--accent-strong); }
 .pw-row { display: flex; gap: 8px; margin: 10px 0 4px; }
 .temp-pw { flex: 1; font-size: 16px !important; letter-spacing: .05em; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: #f6f8fa; }
 .dialog { width: min(460px, calc(100vw - 32px)); }
+/* radio buttons inside dialogs: don't inherit text-box styling */
+.dialog .field input[type=radio], .dialog .field input[type=checkbox] { padding: 0; border: 0; width: auto; flex: none; margin: 0; }
+.radio { justify-content: flex-start; align-self: flex-start; white-space: nowrap; cursor: pointer; }
