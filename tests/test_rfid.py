@@ -278,6 +278,17 @@ class PatternTests(EngineTests):
     def test_switch_stops_first_and_adapts(self):
         pass
 
+    def test_pattern_detection_applies_while_running(self):
+        pat = dict(self.PATTERN, id="own", name="Own", continuous=True,
+                   detection={"enter_reads": 1, "exit_timeout_s": 60, "move_quiet_s": 0, "rssi_min_dbm": -60, "epc_prefix": ""})
+        self.eng.configure(dict(self.eng.settings, patterns=[pat]))
+        self.eng.start_inventory("pattern:own")
+        eff = self.eng.status()["effective"]
+        self.assertEqual((eff["source"], eff["enter_reads"], eff["exit_timeout_s"], eff["rssi_min_dbm"]), ("pattern", 1, 60, -60))
+        self.eng.stop_inventory()
+        eff = self.eng.status()["effective"]
+        self.assertEqual((eff["source"], eff["enter_reads"], eff["exit_timeout_s"]), ("global", 2, 1))
+
     def test_runs_steps_once(self):
         self.eng.start_inventory("pattern:two")
         st = self.eng.status()
@@ -316,7 +327,32 @@ class PatternTests(EngineTests):
             self.eng.start_inventory("pattern:missing")
 
 
+class OverrideTests(unittest.TestCase):
+    def test_override_and_restore(self):
+        t = rfid.TagTracker(dict(rfid.DEFAULTS, exit_timeout_s=5, enter_reads=2, epc_prefix=""))
+        t.set_override({"enter_reads": 1, "exit_timeout_s": 30, "epc_prefix": "E280", "move_quiet_s": 0, "rssi_min_dbm": None})
+        self.assertEqual((t.enter_reads(), t.exit_timeout()), (1, 30))
+        self.assertEqual(t.read(EPC2, 1, -5000, now=0), [])               # prefix from the override
+        self.assertEqual(t.read(EPC, 1, -5000, now=0)[0][0], "tag_enter")
+        t.configure(dict(rfid.DEFAULTS, exit_timeout_s=7))              # global edit while running keeps the override
+        self.assertEqual(t.exit_timeout(), 30)
+        t.set_override(None)
+        self.assertEqual((t.enter_reads(), t.exit_timeout()), (2, 7))
+
+
 class PatternValidateTests(unittest.TestCase):
+    def test_detection_override(self):
+        pat = {"name": "P", "steps": [{"preset": "a", "seconds": 1}, {"preset": "b", "seconds": 1}],
+               "detection": {"enter_reads": "1", "exit_timeout_s": "30", "move_quiet_s": 2, "rssi_min_dbm": "", "epc_prefix": "e2"}}
+        s, e = rfid.validate({"patterns": [pat]}, {})
+        self.assertEqual(e, [])
+        self.assertEqual(s["patterns"][0]["detection"], {"enter_reads": 1, "exit_timeout_s": 30.0, "move_quiet_s": 2.0,
+                                                         "rssi_min_dbm": None, "epc_prefix": "E2"})
+        _, e = rfid.validate({"patterns": [dict(pat, detection={"enter_reads": 0, "exit_timeout_s": 0})]}, {})
+        self.assertTrue(all(x.startswith("Firing pattern “P”") for x in e) and len(e) == 2, e)
+        s, _ = rfid.validate({"patterns": [{k: v for k, v in pat.items() if k != "detection"}]}, {})
+        self.assertNotIn("detection", s["patterns"][0])
+
     def test_validate(self):
         good = {"name": "Portal then drawers", "continuous": True,
                 "steps": [{"preset": "LPR", "seconds": "5", "pause_s": "1"}, {"preset": "deep-scan", "seconds": 10}]}

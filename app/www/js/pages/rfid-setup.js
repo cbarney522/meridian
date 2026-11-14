@@ -151,8 +151,13 @@ export function render(root, ctx) {
     const eff = s.effective;
     if (inv.effective && eff) {
       const adj = eff.report_interval_s > 0 || eff.exit_timeout_s !== Number(state.data.settings.exit_timeout_s);
-      fill(inv.effective, "In effect now: arrived after ", h("b", {}, String(eff.enter_reads)), eff.enter_reads === 1 ? " read" : " reads",
-        ", gone after ", h("b", {}, `${eff.exit_timeout_s} s`), adj ? " (adjusted for the running preset or pattern)." : ".");
+      const src = eff.source === "pattern" && s.pattern ? `“${s.pattern.name}”'s own settings` : "the global settings";
+      fill(inv.effective, "In effect now (", src, "): arrived after ", h("b", {}, String(eff.enter_reads)), eff.enter_reads === 1 ? " read" : " reads",
+        ", gone after ", h("b", {}, `${eff.exit_timeout_s} s`),
+        eff.rssi_min_dbm !== null ? `, signal ≥ ${eff.rssi_min_dbm} dBm` : "", eff.epc_prefix ? `, EPCs ${eff.epc_prefix}…` : "",
+        eff.report_interval_s > 0 ? ` (gone-after stretched for a preset that reports every ${eff.report_interval_s} s)`
+          : eff.cycle_floor_s && eff.exit_timeout_s === eff.cycle_floor_s ? " (gone-after kept to one full cycle)" : "", ".");
+      void adj;
     }
   }
 
@@ -182,20 +187,29 @@ export function render(root, ctx) {
         }))),
       check("ignore_unzoned", "Ignore antennas without a zone name"));
 
+    inv.effective = h("p", { class: "hint" });
+    fill(trackCard, h("h2", {}, "Arrived / left detection"),
+      h("p", { class: "hint" }, "Used by reader presets, and by firing patterns that don't have their own settings."),
+      inv.effective, detectionFields(f, changed, dis));
+  }
+
+  // the five "Arrived / left detection" fields, for the global settings or a firing pattern's own
+  function detectionFields(obj, onChange, dis, ids = "") {
     const num = (key, label, help, attrs = {}) => {
-      const el = h("input", { type: "text", inputmode: "decimal", value: f[key] ?? "", disabled: dis, ...attrs });
-      el.addEventListener("input", () => { f[key] = el.value; changed(); });
+      const el = h("input", { type: "text", inputmode: "decimal", value: obj[key] ?? "", disabled: dis,
+        "aria-label": `${label}${ids}`, ...attrs });
+      el.addEventListener("input", () => { obj[key] = el.value; onChange(); });
       return h("label", { class: "field" }, h("span", { class: "field-label" }, label), el, h("span", { class: "field-help" }, help));
     };
-    inv.effective = h("p", { class: "hint" });
-    fill(trackCard, h("h2", {}, "Arrived / left detection"), inv.effective,
-      h("div", { class: "form-grid" },
-        num("enter_reads", "Reads to confirm arrival", "A tag counts as arrived after this many reads. Filters out stray reads from passing tags."),
-        num("exit_timeout_s", "Gone after (seconds)", "A tag not read for this long has left. Raise it if tags at the edge of the field flicker in and out."),
-        num("move_quiet_s", "Move delay (seconds)", "A tag read by another zone's antenna only moves there once its old zone hasn't read it for this long."),
-        num("rssi_min_dbm", "Minimum signal (dBm)", "Ignore weaker reads, e.g. -65, to keep tags in neighbouring areas out. Empty = no limit.", { placeholder: "no limit" }),
-        num("epc_prefix", "Only EPCs starting with", "Hex, e.g. E280 or your company prefix. Empty = all tags.", { class: "mono", placeholder: "all tags" })));
+    return h("div", { class: "form-grid" },
+      num("enter_reads", "Reads to confirm arrival", "A tag counts as arrived after this many reads. Filters out stray reads from passing tags."),
+      num("exit_timeout_s", "Gone after (seconds)", "A tag not read for this long has left. Raise it if tags at the edge of the field flicker in and out."),
+      num("move_quiet_s", "Move delay (seconds)", "A tag read by another zone's antenna only moves there once its old zone hasn't read it for this long."),
+      num("rssi_min_dbm", "Minimum signal (dBm)", "Ignore weaker reads, e.g. -65, to keep tags in neighbouring areas out. Empty = no limit.", { placeholder: "no limit" }),
+      num("epc_prefix", "Only EPCs starting with", "Hex, e.g. E280 or your company prefix. Empty = all tags.", { class: "mono", placeholder: "all tags" }));
   }
+  const DET_KEYS = ["enter_reads", "exit_timeout_s", "move_quiet_s", "rssi_min_dbm", "epc_prefix"];
+  const detFrom = (src) => Object.fromEntries(DET_KEYS.map((k) => [k, src[k] ?? ""]));
   // ---------- firing patterns
   function drawPatterns() {
     const f = state.form, list = f.patterns || [];
@@ -207,12 +221,15 @@ export function render(root, ctx) {
       h("p", { class: "hint" }, "A firing pattern runs two or more reader presets one after another, each for a set time, ",
         "with an optional pause after each. Choose it in the Preset list above like any preset."),
       list.length ? h("table", { class: "table simple" },
-        h("thead", {}, h("tr", {}, ["Name", "Sequence", "Runs", "One cycle", ""].map((x) => h("th", {}, x)))),
+        h("thead", {}, h("tr", {}, ["Name", "Sequence", "Runs", "One cycle", "Arrived / left", ""].map((x) => h("th", {}, x)))),
         h("tbody", {}, list.map((p, i) => h("tr", {},
           h("td", {}, h("b", {}, p.name)),
           h("td", {}, summary(p)),
           h("td", {}, p.continuous ? "Continuously" : "Once"),
           h("td", {}, fmtS(p.steps.reduce((a, st) => a + Number(st.seconds || 0) + Number(st.pause_s || 0), 0))),
+          h("td", {}, p.detection ? [h("b", {}, "Own: "), `${p.detection.enter_reads} read${Number(p.detection.enter_reads) === 1 ? "" : "s"}, gone after ${fmtS(p.detection.exit_timeout_s)}`,
+            p.detection.rssi_min_dbm !== null && p.detection.rssi_min_dbm !== "" ? `, ≥ ${p.detection.rssi_min_dbm} dBm` : "",
+            p.detection.epc_prefix ? `, EPC ${p.detection.epc_prefix}…` : ""] : h("span", { class: "muted" }, "Global settings")),
           h("td", { class: "actions-cell" }, canEdit && !editing ? [
             h("button", { type: "button", class: "btn btn-small", onclick: () => openEditor(i) }, "Edit"),
             h("button", { type: "button", class: "btn btn-small", onclick: () => removePattern(i) }, "Delete")] : null)))))
@@ -224,6 +241,7 @@ export function render(root, ctx) {
     const src = index >= 0 ? state.form.patterns[index] : null;
     editing = { index, errors: [], draft: src ? clone(src) : { id: "", name: "", continuous: false,
       steps: [{ preset: "", seconds: 10, pause_s: 0 }, { preset: "", seconds: 10, pause_s: 0 }] } };
+    if (!editing.draft.detection) editing.draft.detection = detFrom(state.form);   // start from the global values
     drawPatterns();
   }
 
@@ -232,7 +250,7 @@ export function render(root, ctx) {
     const name = h("input", { type: "text", value: d.name, maxlength: 40, placeholder: "e.g. Portal then drawers", "aria-label": "Pattern name" });
     name.addEventListener("input", () => { d.name = name.value; });
     const cycle = h("span", { class: "muted" });
-    const updateCycle = () => { cycle.textContent = `One cycle: ${fmtS(d.steps.reduce((a, st) => a + (Number(st.seconds) || 0) + (Number(st.pause_s) || 0), 0))}`; };
+    let updateCycle = () => { cycle.textContent = `One cycle: ${fmtS(d.steps.reduce((a, st) => a + (Number(st.seconds) || 0) + (Number(st.pause_s) || 0), 0))}`; };
     const rows = d.steps.map((st, i) => {
       const sel = h("select", { "aria-label": `Preset for step ${i + 1}` },
         h("option", { value: "", selected: !st.preset }, "Choose a preset…"),
@@ -249,6 +267,16 @@ export function render(root, ctx) {
     });
     const cont = h("input", { type: "checkbox", checked: d.continuous });
     cont.addEventListener("change", () => { d.continuous = cont.checked; });
+    const floorNote = h("div");
+    const cycleS = () => d.steps.reduce((a, st) => a + (Number(st.seconds) || 0) + (Number(st.pause_s) || 0), 0);
+    const updateFloor = () => {
+      const gone = Number(d.detection.exit_timeout_s), floor = cycleS() + 2;
+      fill(floorNote, gone > 0 && gone < floor ? h("div", { class: "notice warn", style: { marginTop: "8px" } },
+        `Gone after (${fmtS(gone)}) is shorter than one cycle plus 2 s (${fmtS(floor)}). A tag read only by some steps would be reported `,
+        `as leaving and arriving again every cycle, so Meridian uses ${fmtS(floor)} while this pattern runs.`) : null);
+    };
+    const prevCycle = updateCycle;
+    updateCycle = () => { prevCycle(); updateFloor(); };
     updateCycle();
     return h("div", { class: "pattern-editor" },
       h("h3", {}, editing.index >= 0 ? `Edit “${state.form.patterns[editing.index].name}”` : "New firing pattern"),
@@ -261,6 +289,11 @@ export function render(root, ctx) {
           onclick: () => { d.steps.push({ preset: "", seconds: 10, pause_s: 0 }); drawPatterns(); } }, "+ Add another preset"),
         cycle),
       h("label", { class: "radio", style: { marginTop: "10px" } }, cont, h("span", {}, "Run continuously (repeat until stopped)")),
+      h("h4", { class: "sub-head" }, "Arrived / left detection for this pattern"),
+      h("p", { class: "hint" }, "These replace the global Arrived / left detection settings while this pattern runs. ",
+        "They start as a copy of the global values. ",
+        h("button", { type: "button", class: "btn btn-small", onclick: () => { d.detection = detFrom(state.form); drawPatterns(); } }, "Copy the global values again")),
+      detectionFields(d.detection, updateFloor, false, " (pattern)"), floorNote,
       editing.errors.length ? h("div", { class: "notice bad", style: { marginTop: "10px" } }, h("ul", {}, editing.errors.map((e) => h("li", {}, e)))) : null,
       h("div", { class: "actions", style: { marginTop: "12px" } },
         h("button", { type: "button", class: "btn btn-primary", onclick: applyEditor }, "Done"),
@@ -281,7 +314,16 @@ export function render(root, ctx) {
       if (!(sec >= 1 && sec <= 3600)) errs.push(`Step ${i + 1}: scan time must be 1–3600 seconds.`);
       if (!(pause >= 0 && pause <= 600)) errs.push(`Step ${i + 1}: pause must be 0–600 seconds.`);
     });
+    const det = d.detection || {};
+    const nr = (v) => (v === "" || v === null || v === undefined ? null : Number(v));
+    if (!(Number(det.enter_reads) >= 1 && Number(det.enter_reads) <= 50 && Number.isInteger(Number(det.enter_reads)))) errs.push("Detection: reads to confirm must be a whole number 1–50.");
+    if (!(Number(det.exit_timeout_s) >= 1 && Number(det.exit_timeout_s) <= 600)) errs.push("Detection: gone after must be 1–600 seconds.");
+    if (!(Number(det.move_quiet_s) >= 0 && Number(det.move_quiet_s) <= 30) || det.move_quiet_s === "") errs.push("Detection: move delay must be 0–30 seconds.");
+    if (nr(det.rssi_min_dbm) !== null && !(nr(det.rssi_min_dbm) >= -100 && nr(det.rssi_min_dbm) <= 0)) errs.push("Detection: minimum signal must be -100 to 0 dBm, or empty.");
+    if (!/^[0-9A-Fa-f]{0,24}$/.test((det.epc_prefix || "").trim())) errs.push("Detection: EPC prefix must be hex digits.");
     if (errs.length) { editing.errors = errs; return drawPatterns(); }
+    d.detection = { enter_reads: Number(det.enter_reads), exit_timeout_s: Number(det.exit_timeout_s), move_quiet_s: Number(det.move_quiet_s),
+                    rssi_min_dbm: nr(det.rssi_min_dbm), epc_prefix: (det.epc_prefix || "").trim().toUpperCase() };
     d.steps = d.steps.map((st) => ({ preset: st.preset, seconds: Number(st.seconds), pause_s: Number(st.pause_s || 0) }));
     if (!d.id) {
       const base = d.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "pattern";

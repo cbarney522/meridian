@@ -357,3 +357,4 @@ input[type=search] { font: 13px var(--mono); padding: 7px 10px; border: 1px soli
 .preset-line { padding: 6px 0; border-top: 1px dashed var(--line); }
 .preset-line:first-child { border-top: 0; }
 .warn-text { color: #9a6700; font-weight: 600; }
+.sub-head { margin: 16px 0 4px; font-size: 13px; }

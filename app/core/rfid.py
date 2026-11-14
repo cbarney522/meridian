@@ -69,19 +69,34 @@ def validate(body, current):
             clean[str(int(port))] = name
     out["zones"] = clean
     out["ignore_unzoned"] = bool(body.get("ignore_unzoned", out["ignore_unzoned"]))
-    for key, lo, hi, label in (("exit_timeout_s", 1, 600, "Gone after"), ("move_quiet_s", 0, 30, "Move delay")):
+    out.update(validate_detection(body, out, errors))
+    out["patterns"] = _validate_patterns(body.get("patterns", out["patterns"]), errors)
+    sel = out["preset"]
+    if sel.startswith(PATTERN_PREFIX) and not any(p["id"] == sel[len(PATTERN_PREFIX):] for p in out["patterns"]):
+        errors.append("The selected firing pattern no longer exists; pick another preset or pattern.")
+    return out, errors
+
+
+DETECTION_KEYS = ("enter_reads", "exit_timeout_s", "move_quiet_s", "rssi_min_dbm", "epc_prefix")
+
+
+def validate_detection(body, current, errors, label=""):
+    """The five 'Arrived / left detection' fields (global, or a firing pattern's override)."""
+    pre = f"{label}: " if label else ""
+    out = {k: current.get(k, DEFAULTS[k]) for k in DETECTION_KEYS}
+    for key, lo, hi, name in (("exit_timeout_s", 1, 600, "Gone after"), ("move_quiet_s", 0, 30, "Move delay")):
         try:
             out[key] = float(body.get(key, out[key]))
             if not lo <= out[key] <= hi:
                 raise ValueError
         except (TypeError, ValueError):
-            errors.append(f"{label} must be {lo}–{hi} seconds.")
+            errors.append(f"{pre}{name} must be {lo}–{hi} seconds.")
     try:
-        out["enter_reads"] = int(body.get("enter_reads", out["enter_reads"]))
+        out["enter_reads"] = int(float(body.get("enter_reads", out["enter_reads"])))
         if not 1 <= out["enter_reads"] <= 50:
             raise ValueError
     except (TypeError, ValueError):
-        errors.append("Reads to confirm must be 1–50.")
+        errors.append(f"{pre}Reads to confirm must be 1–50.")
     rssi = body.get("rssi_min_dbm", out["rssi_min_dbm"])
     if rssi in ("", None):
         out["rssi_min_dbm"] = None
@@ -91,16 +106,12 @@ def validate(body, current):
             if not -100 <= out["rssi_min_dbm"] <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            errors.append("Minimum signal must be between -100 and 0 dBm (or empty).")
+            errors.append(f"{pre}Minimum signal must be between -100 and 0 dBm (or empty).")
     prefix = str(body.get("epc_prefix", out["epc_prefix"]) or "").strip().upper()
     if not HEX_RE.match(prefix) or len(prefix) > 24:
-        errors.append("EPC prefix: hex digits only (0-9, A-F), up to 24.")
+        errors.append(f"{pre}EPC prefix: hex digits only (0-9, A-F), up to 24.")
     out["epc_prefix"] = prefix
-    out["patterns"] = _validate_patterns(body.get("patterns", out["patterns"]), errors)
-    sel = out["preset"]
-    if sel.startswith(PATTERN_PREFIX) and not any(p["id"] == sel[len(PATTERN_PREFIX):] for p in out["patterns"]):
-        errors.append("The selected firing pattern no longer exists; pick another preset or pattern.")
-    return out, errors
+    return out
 
 
 def _validate_patterns(patterns, errors):
@@ -147,7 +158,11 @@ def _validate_patterns(patterns, errors):
             steps.append({"preset": preset[:64], "seconds": secs, "pause_s": pause})
         if len(steps) < 2:
             errors.append(f"{label}: add at least two presets.")
-        out.append({"id": pid, "name": name[:40], "continuous": bool(p.get("continuous")), "steps": steps})
+        entry = {"id": pid, "name": name[:40], "continuous": bool(p.get("continuous")), "steps": steps}
+        if isinstance(p.get("detection"), dict):
+            # this pattern's own arrived/left settings: replace the global ones while it runs
+            entry["detection"] = validate_detection(p["detection"], DEFAULTS, errors, label)
+        out.append(entry)
     return out
 
 
@@ -231,9 +246,17 @@ class TagTracker:
 
     def configure(self, settings):
         with self.lock:
-            self.s = dict(DEFAULTS, **settings)
+            self.base = dict(DEFAULTS, **settings)
+            self.override = getattr(self, "override", None)
+            self.s = dict(self.base, **(self.override or {}))
             self.min_exit_s = getattr(self, "min_exit_s", 0)
             self.report_interval_s = getattr(self, "report_interval_s", 0)
+
+    def set_override(self, detection):
+        """A firing pattern's own detection settings (None = back to the global ones)."""
+        with self.lock:
+            self.override = {k: v for k, v in (detection or {}).items() if k in DETECTION_KEYS} or None
+            self.s = dict(self.base, **(self.override or {}))
 
     def exit_timeout(self):
         """'Gone after', stretched while a firing pattern runs (tags read only by some steps) and when
@@ -526,6 +549,7 @@ class RfidEngine:
         with self._pattern_lock:
             self._pattern_cancel = cancel
             self.tracker.min_exit_s = pattern_cycle_s(pattern) + 2
+            self.tracker.set_override(pattern.get("detection"))
             self.pattern = {"id": pattern["id"], "name": pattern["name"], "continuous": pattern["continuous"],
                             "steps": len(pattern["steps"]), "step": 1, "preset": first["preset"], "phase": "scanning",
                             "phase_ends": self.clock() + first["seconds"], "cycle": 1, "error": None}
@@ -570,6 +594,7 @@ class RfidEngine:
                     self.pattern = None
                     self.tracker.min_exit_s = 0
                     self.tracker.report_interval_s = 0
+                    self.tracker.set_override(None)
             self.refresh_status()
 
     def _pattern_update(self, **kw):
@@ -582,6 +607,7 @@ class RfidEngine:
             cancel, self._pattern_cancel = self._pattern_cancel, None
             self.pattern = None
             self.tracker.min_exit_s = 0
+            self.tracker.set_override(None)
         if cancel:
             cancel.set()
 
@@ -684,7 +710,10 @@ class RfidEngine:
         pattern = self.pattern_status()
         tr = self.tracker
         return {"effective": {"enter_reads": tr.enter_reads(), "exit_timeout_s": tr.exit_timeout(),
-                              "report_interval_s": tr.report_interval_s},
+                              "report_interval_s": tr.report_interval_s, "move_quiet_s": tr.s["move_quiet_s"],
+                              "rssi_min_dbm": tr.s["rssi_min_dbm"], "epc_prefix": tr.s["epc_prefix"],
+                              "source": "pattern" if tr.override else "global",
+                              "cycle_floor_s": tr.min_exit_s or None},
                 "available": True, "running": bool(self.reader.get("running")) or pattern is not None,
                 "pattern": pattern, "reader_status": self.reader.get("status"),
                 "active_preset": self.reader.get("active_preset"), "reader_error": self.reader_error,
