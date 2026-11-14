@@ -39,9 +39,10 @@ a { color: var(--accent-strong); }
 .brand-mark::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 3px; margin-left: -1.5px; background: var(--accent); }
 .brand-name { font-weight: 700; letter-spacing: .14em; font-size: 13px; }
 
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--bar-muted); white-space: nowrap; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--bar-muted); white-space: nowrap; }
 .reader { color: var(--bar-fg); }
 .conn { display: inline-flex; align-items: center; gap: 6px; }
+.conn .conn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
 .conn.live .dot { background: var(--ok); }
 .conn.down .dot { background: var(--bad); }
@@ -57,7 +58,7 @@ a { color: var(--accent-strong); }
 .mb-top {
   display: flex; align-items: center; gap: 6px;
   background: none; border: 0; color: var(--bar-fg); font: inherit; font-size: 14px;
-  padding: 0 12px; min-height: 48px; cursor: pointer; text-decoration: none;
+  padding: 0 10px; min-height: 48px; cursor: pointer; text-decoration: none;
   border-bottom: 3px solid transparent;
 }
 .mb-top:hover, .mb-item.open > .mb-top { background: var(--bar-hover); }
@@ -128,3 +129,41 @@ a { color: var(--accent-strong); }
   .card.wide { grid-column: auto; }
   .topbar-right .reader, .topbar-right .user { display: none; }
 }
+
+/* ---------- tables, toolbar, chips (Site page and future list pages) ---------- */
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: inherit; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 16px;
+        border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+.chip-n { font-weight: 700; font-variant-numeric: tabular-nums; }
+.chip.warnish:not(.on) .chip-n { color: var(--bad); }
+.search { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); min-width: 280px; background: var(--panel); }
+
+.table-card { padding: 0; overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; background: #f6f8fa; border-bottom: 1px solid var(--line); padding: 0; white-space: nowrap; position: sticky; top: 0; }
+.table th.num, .table td.num { text-align: right; }
+.th-sort { font: inherit; font-weight: 600; color: var(--muted); background: none; border: 0; padding: 9px 12px; cursor: pointer; width: 100%; text-align: inherit; }
+.th-sort:hover { color: var(--text); }
+.sort-ind { display: inline-block; margin-left: 4px; font-size: 10px; }
+.sort-ind:empty { display: none; }
+.table th.num .th-sort { text-align: right; }
+.table td { padding: 8px 12px; border-bottom: 1px solid #eef1f4; vertical-align: top; }
+.table tbody tr:hover { background: #f7fafd; }
+.row-off td { color: var(--muted); }
+.reader-link { font-weight: 600; text-decoration: none; }
+.reader-link:hover { text-decoration: underline; }
+.sub { color: var(--muted); font-size: 12px; margin-top: 1px; }
+.tag { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 3px; background: #e7f1fb; color: var(--accent-strong); font-size: 11px; font-weight: 600; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; }
+.status.on::before { background: var(--ok); }
+.status.off { color: var(--bad); }
+.status.off::before { background: var(--bad); }
+.alert + .alert { margin-left: 4px; }
+.muted { color: var(--muted); }
+.open { white-space: nowrap; text-align: right; }
+.open-link { text-decoration: none; font-weight: 600; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

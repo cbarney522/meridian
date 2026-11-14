@@ -2,11 +2,12 @@
 import { api, h } from "./api.js";
 import { buildMenubar, markActive, indexMenu } from "./menu.js";
 import * as dashboard from "./pages/dashboard.js";
+import * as site from "./pages/site.js";
 import * as placeholder from "./pages/placeholder.js";
 
 // Pages that have real implementations. Everything else in the menu gets the placeholder
 // until it's built, so the whole navigation works from day one.
-const PAGES = { "/dashboard": dashboard };
+const PAGES = { "/dashboard": dashboard, "/site": site };
 
 const $ = (id) => document.getElementById(id);
 const ctx = { session: null, menuIndex: new Map(), events: null };
@@ -19,8 +20,8 @@ class LiveFeed {
     this.stop();
     this.es = new EventSource("api/events");
     const conn = $("conn"), label = conn.querySelector(".conn-label");
-    this.es.onopen = () => { conn.className = "conn live"; label.textContent = "Live"; };
-    this.es.onerror = () => { conn.className = "conn down"; label.textContent = "Reconnecting"; };
+    this.es.onopen = () => { conn.className = "conn live"; label.textContent = "Live"; conn.title = "Live connection"; };
+    this.es.onerror = () => { conn.className = "conn down"; label.textContent = "Reconnecting"; conn.title = "Reconnecting…"; };
     const types = ["badge_scan", "tag_enter", "tag_exit", "session_closed", "gpi_change", "rule_fired"];
     for (const t of types) this.es.addEventListener(t, (e) => {
       const ev = JSON.parse(e.data);
@@ -45,8 +46,8 @@ async function loadSession() {
   ctx.menuIndex = indexMenu(menu.menus);
 
   $("reader-name").textContent = session.reader.name;
-  $("user-name").textContent = session.user;
-  $("role-badge").textContent = session.role_label;
+  $("role-badge").textContent = `${session.user} · ${session.role_label}`;
+  $("role-badge").title = `Signed in as ${session.user} (${session.role_label})`;
   buildMenubar($("mainnav"), menu.menus);
 
   const sw = $("dev-switch");

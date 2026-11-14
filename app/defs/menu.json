@@ -5,6 +5,9 @@
       "id": "dashboard", "label": "Dashboard", "route": "/dashboard", "perm": "dashboard.view"
     },
     {
+      "id": "site", "label": "Site", "route": "/site", "perm": "site.view"
+    },
+    {
       "id": "operations", "label": "Operations",
       "groups": [
         { "label": "Live", "items": [

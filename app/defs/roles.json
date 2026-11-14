@@ -2,6 +2,7 @@
   "_comment": "Roles are bundles of permissions. The server checks permissions on every API call; the UI uses the same data only to decide what to show. '*' means every permission.",
   "permissions": {
     "dashboard.view":    "See the dashboard and live status",
+    "site.view":         "See every Meridian reader at the site and open their UIs",
     "rfid.view":         "View RFID settings (antennas, zones, profiles)",
     "rfid.edit":         "Change RFID settings",
     "hardware.view":     "View I/O map, USB devices, badge readers",
@@ -36,7 +37,7 @@
       "label": "Site Admin",
       "description": "Customer IT or crib manager. Accounts, credentials, certificates, audit.",
       "permissions": [
-        "dashboard.view", "rfid.view", "hardware.view", "rules.view",
+        "dashboard.view", "site.view", "rfid.view", "hardware.view", "rules.view",
         "access.view", "access.manage", "tools.view",
         "integrations.view", "integrations.edit", "kiosk.view",
         "data.view", "data.export", "system.view", "system.edit",
@@ -47,7 +48,7 @@
       "label": "Technician",
       "description": "Field installer. Hardware, RFID, rules, integrations, kiosk setup.",
       "permissions": [
-        "dashboard.view", "rfid.view", "rfid.edit",
+        "dashboard.view", "site.view", "rfid.view", "rfid.edit",
         "hardware.view", "hardware.edit", "io.override",
         "rules.view", "rules.edit", "access.view", "tools.view", "tools.edit",
         "integrations.view", "integrations.edit", "kiosk.view", "kiosk.edit",
@@ -58,14 +59,14 @@
       "label": "Supervisor",
       "description": "Day-to-day operations. Sessions, alarms, overrides, unknown tags.",
       "permissions": [
-        "dashboard.view", "io.override", "sessions.manage",
+        "dashboard.view", "site.view", "io.override", "sessions.manage",
         "access.view", "tools.view", "tools.edit", "data.view"
       ]
     },
     "viewer": {
       "label": "Viewer",
       "description": "Read-only dashboards, history and audit log.",
-      "permissions": ["dashboard.view", "data.view", "audit.view"]
+      "permissions": ["dashboard.view", "site.view", "data.view", "audit.view"]
     },
     "operator": {
       "label": "Operator",

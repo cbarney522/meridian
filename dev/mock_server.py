@@ -120,6 +120,78 @@ class Sim:
 SIM = Sim()
 
 
+# ---------------------------------------------------------------- simulated site (50 readers)
+# On a real reader this list comes from the retained MQTT heartbeats every Meridian reader
+# publishes (evt/{site}/{serial}/status) plus Last Will "online" flags. Here it's generated.
+class Fleet:
+    KINDS = [("Crib portal", "tool-crib-portal"), ("Drawer cabinet", "cabinet-drawer"),
+             ("Bin shelf", "bin-shelf"), ("Dock door", "generic")]
+    BUILDINGS = ["Bldg A", "Bldg B", "Bldg C", "Maintenance", "Receiving"]
+
+    def __init__(self, n=50, seed=7):
+        rnd = random.Random(seed)
+        now = time.time()
+        self.readers = []
+        for i in range(n):
+            kind, profile = self.KINDS[i % len(self.KINDS)]
+            r = {
+                "serial": str(37017090614 + i * 37),
+                "name": f"{kind} {i // len(self.KINDS) + 1}",
+                "location": rnd.choice(self.BUILDINGS),
+                "profile": profile,
+                "app_version": "0.1.0-dev" if i == 0 else rnd.choices(["0.4.1", "0.4.0", "0.3.2"], [8, 3, 1])[0],
+                "firmware": rnd.choices(["10.4.0", "10.3.1"], [9, 1])[0],
+                "ip": f"10.20.{10 + i // 20}.{100 + i % 20}",
+                "tags_in_field": rnd.randint(0, 120),
+                "outbox_depth": 0,
+                "usb_drive": True,
+                "last_seen": now,
+                "offline_since": None,
+            }
+            self.readers.append(r)
+        self.readers[0]["name"] = "Crib 2 portal"          # this reader (matches /api/session)
+        self.readers[0]["location"] = "Bldg A"
+        for i in (13, 27, 41):                              # a few offline for hours
+            self.readers[i]["offline_since"] = now - rnd.randint(600, 4 * 3600)
+        self.readers[9]["usb_drive"] = False                # one with a missing USB drive
+        self.readers[22]["outbox_depth"] = 340              # one that can't reach the broker
+        self.rnd = rnd
+
+    def snapshot(self):
+        now = time.time()
+        latest = max((r["app_version"] for r in self.readers if not r["app_version"].endswith("-dev")),
+                     key=lambda v: tuple(int(x) for x in v.split(".")))
+        out = []
+        for idx, r in enumerate(self.readers):
+            online = r["offline_since"] is None
+            if online:
+                r["last_seen"] = now - self.rnd.uniform(0, 55)
+                r["tags_in_field"] = max(0, r["tags_in_field"] + self.rnd.randint(-2, 2))
+                if r["outbox_depth"]:
+                    r["outbox_depth"] += self.rnd.randint(0, 6)
+            alerts = []
+            if not online:
+                alerts.append("offline")
+            if not r["usb_drive"]:
+                alerts.append("usb_missing")
+            if r["outbox_depth"] > 100:
+                alerts.append("outbox_backlog")
+            out.append({
+                **{k: r[k] for k in ("serial", "name", "location", "profile", "app_version", "firmware", "ip",
+                                     "outbox_depth", "usb_drive")},
+                "this_reader": idx == 0,
+                "online": online,
+                "last_seen_s": int(now - (r["last_seen"] if online else r["offline_since"])),
+                "tags_in_field": r["tags_in_field"] if online else None,
+                "alerts": alerts,
+                "url": f"https://{r['ip']}:8443/",
+            })
+        return {"site": "plant-atl", "latest_version": latest, "readers": out}
+
+
+FLEET = Fleet()
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(SimpleHTTPRequestHandler):
     server_version = "MeridianMock/0.1"
@@ -190,6 +262,10 @@ class Handler(SimpleHTTPRequestHandler):
         if p == "/api/status":
             if self.require("dashboard.view"):
                 self.send_json(SIM.status())
+            return
+        if p == "/api/site/readers":
+            if self.require("site.view"):
+                self.send_json(FLEET.snapshot())
             return
         if p == "/api/events":
             if self.require("dashboard.view"):

@@ -54,6 +54,30 @@ The router calls this before rendering any page.
 }
 ```
 
+## Site
+
+### `GET /api/site/readers` — needs `site.view`
+Every Meridian reader at the site. On a real reader this is built from the **retained MQTT
+heartbeats** each reader publishes on `evt/{site}/{serial}/status`, plus the Last Will
+`evt/{site}/{serial}/online` flag, so no central server is needed. `url` is where that
+reader's own UI is served; the UI opens it in a new tab.
+```json
+{
+  "site": "plant-atl",
+  "latest_version": "0.4.1",
+  "readers": [{
+    "serial": "37017090614", "name": "Crib 2 portal", "location": "Bldg A",
+    "profile": "tool-crib-portal", "app_version": "0.4.1", "firmware": "10.4.0",
+    "ip": "10.20.10.100", "url": "https://10.20.10.100:8443/",
+    "this_reader": true, "online": true, "last_seen_s": 12,
+    "tags_in_field": 47, "outbox_depth": 0, "usb_drive": true,
+    "alerts": []
+  }]
+}
+```
+`alerts` values so far: `offline`, `usb_missing`, `outbox_backlog`. `tags_in_field` is `null`
+when the reader is offline.
+
 ## Live events
 
 ### `GET /api/events` — needs `dashboard.view`

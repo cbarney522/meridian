@@ -26,6 +26,7 @@ export const api = {
   session: () => request("GET", "api/session"),
   menu: () => request("GET", "api/menu"),
   status: () => request("GET", "api/status"),
+  siteReaders: () => request("GET", "api/site/readers"),
   routeCheck: (route) => request("GET", "api/route-check?route=" + encodeURIComponent(route)),
   setRole: (role) => request("POST", "api/dev/role", { role }),
 };
