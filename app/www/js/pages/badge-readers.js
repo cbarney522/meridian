@@ -60,7 +60,9 @@ export function render(root, ctx) {
 
   // ---------- reader cards
   function drawCards() {
-    fill(cards, state.data.readers.map((r) => {
+    fill(cards, state.data.listener === "disabled"
+      ? h("div", { class: "notice warn" }, "Badge reading is turned off on this reader (server started with --no-badges).") : null,
+      state.data.readers.map((r) => {
       const statusPill = {
         ok: ["ok", "Connected"], missing: ["bad", "Missing"], unassigned: ["neutral", "Not assigned"],
         mismatch: ["bad", "Wrong device"], changed: ["warn", "Different device"],
@@ -78,7 +80,8 @@ export function render(root, ctx) {
                    h("div", { class: "sub" }, r.last_scan.ts.replace("T", " "))]
                 : h("span", { class: "muted" }, "No scans yet")),
               h("dt", {}, "Today"), h("dd", {}, `${r.scans_today} scans`,
-                r.errors_today ? h("span", { class: "pill bad", style: { marginLeft: "8px" } }, `${r.errors_today} invalid`) : null))
+                r.errors_today ? h("span", { class: "pill bad", style: { marginLeft: "8px" } }, `${r.errors_today} invalid`) : null),
+              r.listener_error ? [h("dt", {}, "Problem"), h("dd", { class: "bad-text" }, r.listener_error)] : null)
           : h("p", { class: "muted" }, "No port is assigned as ", ROLE_LABEL[r.role].toLowerCase(), ". Assign one on ",
               h("a", { href: "#/hardware/usb" }, "Devices"), canEdit ? ", or swipe a badge on the reader below to identify it." : "."));
     }));

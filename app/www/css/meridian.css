@@ -256,3 +256,9 @@ a { color: var(--accent-strong); }
 .dialog input { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 @media (max-width: 1100px) { .scan { grid-template-columns: 70px 1fr; } }
+
+.pwstrip { display: flex; align-items: center; gap: 14px; background: #fbe5e3; border-bottom: 1px solid #f1c1bc; color: #8a2a22; padding: 6px 20px; font-size: 13px; }
+.pwstrip[hidden] { display: none; }
+.dialog .field { margin-bottom: 12px; }
+.dialog .field input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; }
+.events li.empty { display: block; }

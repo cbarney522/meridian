@@ -55,6 +55,8 @@ async function loadSession() {
   $("role-badge").title = `Signed in as ${session.user} (${session.role_label})`;
   buildMenubar($("mainnav"), menu.menus);
 
+  $("pw-strip").hidden = !session.must_change_password;
+
   const sw = $("dev-switch");
   if (session.dev_mode) {
     const sel = $("role-select");
@@ -132,8 +134,44 @@ async function boot() {
     await loadSession();
     route();
   });
+  $("pw-open").addEventListener("click", openPasswordDialog);
   window.addEventListener("hashchange", route);
   route();
+}
+
+// Change-password dialog. With HTTP Basic auth the browser asks for the new password on the
+// next request, so we say so up front.
+function openPasswordDialog() {
+  const cur = h("input", { type: "password", autocomplete: "current-password" });
+  const nw = h("input", { type: "password", autocomplete: "new-password" });
+  const again = h("input", { type: "password", autocomplete: "new-password" });
+  const err = h("p", { class: "bad-text", hidden: true });
+  const go = h("button", { type: "button", class: "btn btn-primary" }, "Change password");
+  const dlg = h("dialog", { class: "dialog" },
+    h("h2", {}, "Change password"),
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "Current password"), cur),
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "New password"), nw,
+      h("span", { class: "field-help" }, "At least 8 characters.")),
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "New password again"), again),
+    err,
+    h("div", { class: "dialog-actions" },
+      h("button", { type: "button", class: "btn", onclick: () => dlg.close() }, "Cancel"), go));
+  dlg.addEventListener("close", () => dlg.remove());
+  go.addEventListener("click", async () => {
+    err.hidden = true;
+    if (nw.value !== again.value) { err.textContent = "The new passwords don't match."; err.hidden = false; return; }
+    try {
+      await api.changePassword(cur.value, nw.value);
+      dlg.replaceChildren(h("h2", {}, "Password changed"),
+        h("p", {}, "Your browser will now ask you to sign in again with the new password."),
+        h("div", { class: "dialog-actions" }, h("button", { type: "button", class: "btn btn-primary", onclick: () => location.reload() }, "Sign in again")));
+    } catch (e) {
+      err.textContent = e.message; err.hidden = false;
+    }
+  });
+  document.body.append(dlg);
+  dlg.showModal();
+  cur.focus();
 }
 
 boot();

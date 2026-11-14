@@ -39,32 +39,39 @@ export function render(root, ctx) {
 
 function drawCards(root, s) {
   const r = s.reader, f = s.rfid;
+  const rfidOn = f.available !== false, mqttOn = s.mqtt.available !== false;
   const maxZone = Math.max(1, ...Object.values(f.zones));
+  const v = (x) => (x === null || x === undefined ? h("span", { class: "muted" }, "—") : x);
+  const notYet = (what) => h("p", { class: "muted" }, `${what} isn't running in this build yet.`);
   root.replaceChildren(
     h("section", { class: "card" }, h("h2", {}, "Reader"),
       h("dl", { class: "kv" },
-        h("dt", {}, "Name"), h("dd", {}, r.name),
-        h("dt", {}, "Serial"), h("dd", {}, r.serial),
-        h("dt", {}, "Firmware"), h("dd", {}, r.firmware),
-        h("dt", {}, "Meridian"), h("dd", {}, r.app_version),
-        h("dt", {}, "Profile"), h("dd", {}, r.profile),
+        h("dt", {}, "Name"), h("dd", {}, v(r.name)),
+        h("dt", {}, "Serial"), h("dd", {}, v(r.serial)),
+        h("dt", {}, "Firmware"), h("dd", {}, v(r.firmware)),
+        h("dt", {}, "Meridian"), h("dd", {}, v(r.app_version)),
+        h("dt", {}, "Profile"), h("dd", {}, v(r.profile)),
         h("dt", {}, "Uptime"), h("dd", {}, uptime(r.uptime_s)),
-        h("dt", {}, "Clock"), h("dd", {}, pill(r.ntp_synced, "NTP synced", "Not synced")),
-        h("dt", {}, "Temperature"), h("dd", {}, `${r.temp_c} °C`))),
+        h("dt", {}, "Clock"), h("dd", {}, r.ntp_synced === null || r.ntp_synced === undefined
+          ? h("span", { class: "pill neutral" }, "Unknown") : pill(r.ntp_synced, "NTP synced", "Not synced")),
+        h("dt", {}, "Temperature"), h("dd", {}, r.temp_c === null || r.temp_c === undefined ? v(null) : `${r.temp_c} °C`))),
     h("section", { class: "card" }, h("h2", {}, "RFID"),
-      h("div", { class: "big" }, f.tags_in_field, h("small", {}, "tags in field")),
-      h("div", { class: "big", style: { marginTop: "8px" } }, f.read_rate, h("small", {}, "reads / s")),
-      h("p", {}, pill(f.running, "Inventory running", "Stopped"))),
+      rfidOn ? [
+        h("div", { class: "big" }, f.tags_in_field, h("small", {}, "tags in field")),
+        h("div", { class: "big", style: { marginTop: "8px" } }, f.read_rate, h("small", {}, "reads / s")),
+        h("p", {}, pill(f.running, "Inventory running", "Stopped"))] : notYet("The RFID engine")),
     h("section", { class: "card" }, h("h2", {}, "Zones"),
-      h("div", { class: "bars" }, Object.entries(f.zones).map(([z, n]) =>
-        h("div", { class: "bar-row" }, h("span", {}, z),
-          h("div", { class: "bar-track" }, h("div", { class: "bar-fill", style: { width: `${(n / maxZone) * 100}%` } })),
-          h("span", { class: "n" }, n))))),
+      Object.keys(f.zones).length
+        ? h("div", { class: "bars" }, Object.entries(f.zones).map(([z, n]) =>
+            h("div", { class: "bar-row" }, h("span", {}, z),
+              h("div", { class: "bar-track" }, h("div", { class: "bar-fill", style: { width: `${(n / maxZone) * 100}%` } })),
+              h("span", { class: "n" }, n))))
+        : h("p", { class: "muted" }, "No zones configured.")),
     h("section", { class: "card" }, h("h2", {}, "Delivery & devices"),
       h("dl", { class: "kv" },
-        h("dt", {}, "MQTT"), h("dd", {}, pill(s.mqtt.connected, "Connected", "Disconnected")),
-        h("dt", {}, "Outbox"), h("dd", {}, s.mqtt.outbox_depth === 0 ? pill(true, "Empty") : h("span", { class: "pill warn" }, `${s.mqtt.outbox_depth} queued`)),
-        h("dt", {}, "USB drive"), h("dd", {}, pill(s.usb.drive, `${(s.usb.free_mb / 1024).toFixed(1)} GB free`, "Missing")),
+        h("dt", {}, "MQTT"), h("dd", {}, mqttOn ? pill(s.mqtt.connected, "Connected", "Disconnected") : h("span", { class: "pill neutral" }, "Not in this build")),
+        h("dt", {}, "Outbox"), h("dd", {}, !mqttOn ? v(null) : s.mqtt.outbox_depth === 0 ? pill(true, "Empty") : h("span", { class: "pill warn" }, `${s.mqtt.outbox_depth} queued`)),
+        h("dt", {}, "USB drive"), h("dd", {}, pill(s.usb.drive, s.usb.free_mb ? `${(s.usb.free_mb / 1024).toFixed(1)} GB free` : "Present", "Missing")),
         h("dt", {}, "Badge in"), h("dd", {}, pill(s.usb.badge_in, "Present", "Missing")),
         h("dt", {}, "Badge out"), h("dd", {}, pill(s.usb.badge_out, "Present", "Missing")))),
     h("section", { class: "card wide" }, h("h2", {}, "Active session"),
@@ -73,7 +80,7 @@ function drawCards(root, s) {
            h("dl", { class: "kv", style: { marginTop: "8px" } },
              h("dt", {}, "Removed"), h("dd", {}, s.session.out.length ? s.session.out.join(", ") : "—"),
              h("dt", {}, "Returned"), h("dd", {}, s.session.in.length ? s.session.in.join(", ") : "—"))]
-        : h("p", { class: "empty" }, "No one badged in")),
+        : h("p", { class: "empty" }, rfidOn ? "No one badged in" : "Sessions start once the RFID engine is running.")),
   );
 }
 

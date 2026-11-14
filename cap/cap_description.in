@@ -1,0 +1,17 @@
+# Meridian R700 App — upgrade description for cap_gen.sh (ETK 10.3.0 format)
+[Description]
+
+# 4-part version, each 0-255. build.sh names the .upgx from this and writes it into app/VERSION.
+Version = 0.1.0.0
+
+# R*** = any reader. Use R700V2 to restrict to v2 hardware (the bundled Python is aarch64 only).
+Valid Reader Hardware = R***
+
+# Staging directory assembled by build.sh; appears on the reader at /cust
+Input Directory = ./build/cap
+
+# Keep settings, accounts, TLS cert and logs when a newer Meridian is installed over this one.
+# (Path relative to the CAP root. Verify on the first upgrade-over-upgrade, then enable.)
+#Persistent Data = rw_dir
+
+Partition Size = 128

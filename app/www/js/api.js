@@ -3,7 +3,7 @@
 
 export class ApiError extends Error {
   constructor(status, body) {
-    super(body && body.error ? body.error : `HTTP ${status}`);
+    super(body && body.details ? body.details.join(" ") : body && body.error ? body.error : `HTTP ${status}`);
     this.status = status;
     this.body = body;
   }
@@ -40,6 +40,7 @@ export const api = {
   devStorageFs: () => request("POST", "api/dev/storage/fs", {}),
   routeCheck: (route) => request("GET", "api/route-check?route=" + encodeURIComponent(route)),
   setRole: (role) => request("POST", "api/dev/role", { role }),
+  changePassword: (current, next) => request("POST", "api/account/password", { current, new: next }),
 };
 
 // Small DOM builder. Text always goes through textContent, never innerHTML,

@@ -4,6 +4,13 @@ The UI talks only to these endpoints. `dev/mock_server.py` implements them with 
 the CAP's server must implement them identically. All responses are JSON unless noted.
 Errors: `{"error": "<code>", ...}` with HTTP 400 / 403 / 404.
 
+On the reader every request (pages and API) needs HTTP Basic credentials from `auth.json`;
+5 failed logins from one address lock it out for 30 s (`429`). Writes from another origin are
+refused (`403`). Endpoints for parts not built yet answer
+`501 {"error": "not_implemented", "details": ["... isn't available in this build yet."]}`
+(currently: `/api/site/readers`, `/api/storage/eject|mount|format`). `/api/status` reports
+`rfid.available: false` and `mqtt.available: false` until the engine exists, and unknown values as `null`.
+
 Every endpoint except `/api/session` checks a permission server-side. A `403` body includes
 `"needs": "<permission>"`.
 
@@ -21,7 +28,13 @@ Who is signed in and what they may do.
 }
 ```
 `dev_mode` and `roles` exist so the mock server can offer the "View as" switcher; the real
-server returns `dev_mode: false`.
+server returns `dev_mode: false` and adds `must_change_password` (true while the default
+password is in use) and `app_version`.
+
+### `POST /api/account/password` — any signed-in user
+`{"current": "...", "new": "..."}` → `200 {"ok": true}` · `400 {"details": ["..."]}`
+(at least 8 characters, not the default or the user name). With Basic auth the browser then
+asks for the new password on the next request.
 
 ### `GET /api/menu`
 `menu.json` filtered to the caller's permissions. Groups and menus with nothing visible are removed.
