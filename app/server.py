@@ -195,6 +195,7 @@ class App:
                 "local": local.isoformat(timespec="seconds"), "timezone": tz,
                 "tz_abbrev": local.strftime("%Z"), "utc_offset": local.strftime("%z"),
                 "tz_database": timeloc.zone("America/New_York") is not None,
+                "tz_path": list(getattr(timeloc.zoneinfo, "TZPATH", ())),
                 "ntp": timeloc.ntp_status(), "reader_ntp_config": ntp_cfg, "sun": sun}
 
     def site_save(self, revision, body):

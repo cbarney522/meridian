@@ -67,7 +67,7 @@ export function render(root, ctx) {
                h("dt", {}, "Daylight"), h("dd", {}, sun.day_length || (sun.sunrise ? "—" : "No sunrise/sunset today"))]
             : [h("dt", {}, "Sunrise / sunset"), h("dd", {}, h("span", { class: "muted" }, "Enter the site's coordinates"))]),
       t.tz_database ? null : h("div", { class: "notice warn", style: { marginTop: "12px" } },
-        "This reader has no time-zone database, so only UTC is available. Rebuild the CAP on a machine with tzdata installed."));
+        "No time-zone database found, so only UTC is available. Looked in: ", (t.tz_path || []).join(", ") || "(nowhere)", ". Rebuild the CAP on a machine with tzdata installed."));
     tick();
   }
 

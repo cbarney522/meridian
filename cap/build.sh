@@ -79,9 +79,11 @@ if [ -d /usr/share/zoneinfo/America ]; then
   cp -aL /usr/share/zoneinfo/. "$STAGE/zoneinfo/"
   rm -rf "$STAGE/zoneinfo/posix" "$STAGE/zoneinfo/right" "$STAGE/zoneinfo"/*.tab "$STAGE/zoneinfo"/leap* \
          "$STAGE/zoneinfo"/posixrules "$STAGE/zoneinfo"/tzdata.zi "$STAGE/zoneinfo"/SECURITY 2>/dev/null || true
-  echo "Bundled time-zone database: $(du -sh "$STAGE/zoneinfo" | cut -f1)"
+  [ -f "$STAGE/zoneinfo/America/New_York" ] || { echo "ERROR: time-zone copy failed"; exit 1; }
+  echo "Bundled time-zone database: $(du -sh "$STAGE/zoneinfo" | cut -f1), $(find "$STAGE/zoneinfo" -type f | wc -l) zones"
 else
-  echo "Note: no /usr/share/zoneinfo on this build machine (sudo apt install tzdata); only UTC if the reader lacks one"
+  echo "ERROR: no time-zone database on this build machine. Run: sudo apt install tzdata   then build again."
+  exit 1
 fi
 
 # ---- fallback TLS cert, used only if the reader has no openssl
