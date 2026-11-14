@@ -4,7 +4,7 @@ import { api, h } from "../api.js";
 const EVENT_LABEL = {
   badge_scan: "Badge", tag_enter: "Returned", tag_exit: "Removed",
   session_closed: "Session closed", gpi_change: "Input", rule_fired: "Rule fired",
-  usb_attached: "USB attached", usb_detached: "USB removed",
+  usb_attached: "USB attached", usb_detached: "USB removed", storage_changed: "Storage",
 };
 const MAX_EVENTS = 40;
 
@@ -25,6 +25,7 @@ export function render(root, ctx) {
 
   let first = true;
   const unsub = ctx.events.subscribe((ev) => {
+    if (ev.type === "badge_raw") return;          // low-level; shown on Hardware › USB › Badge readers
     if (first) { feed.replaceChildren(); first = false; }
     feed.prepend(eventRow(ev));
     while (feed.children.length > MAX_EVENTS) feed.lastChild.remove();
@@ -90,6 +91,7 @@ function eventRow(ev) {
     case "gpi_change": text = `${ev.input} ${ev.state}`; break;
     case "rule_fired": text = `${ev.rule} — ${ev.detail}`; break;
     case "usb_attached": case "usb_detached": text = `${ev.product || "Device"} on port ${ev.port}`; break;
+    case "storage_changed": text = `Data drive ${ev.action === "eject" ? "ejected" : ev.action === "mount" ? "mounted" : "formatted"}`; break;
     default: text = JSON.stringify(ev);
   }
   return h("li", {}, h("time", {}, time), h("span", { class: "etype " + cls }, EVENT_LABEL[ev.type] || ev.type), h("span", {}, text));

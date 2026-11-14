@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb  # noqa: E402
+from core import usb, badges, storage  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
 import fake_sysfs  # noqa: E402
 
@@ -62,6 +62,7 @@ class Sim:
         self.outbox = 0
         self.session = None
         self.checked_out = set()   # tools currently out of the crib
+        self.on_badge = None       # hook so the badge-reader page sees the same swipes
 
     def emit(self, etype, **data):
         with self.lock:
@@ -80,6 +81,8 @@ class Sim:
                 uid, name = random.choice(USERS)
                 self.session = {"badge": uid, "user": name, "out": [], "in": []}
                 self.emit("badge_scan", source="badge_in", badge=uid, user=name, result="granted")
+                if self.on_badge:
+                    self.on_badge(uid)
             elif self.session and r < 0.55:
                 zone = random.choice(ZONES[:3])
                 available = [t for t in TOOLS if t not in self.checked_out]
@@ -106,6 +109,8 @@ class Sim:
                 self.emit("rule_fired", rule="low-stock-drawer3", detail="count below 5 for 10 s")
             elif r < 0.78:
                 self.emit("badge_scan", source="badge_in", badge="99999", user=None, result="denied_unknown")
+                if self.on_badge:
+                    self.on_badge("99999")
 
     def status(self):
         up = int(time.time() - STARTED) + 282441
@@ -283,6 +288,190 @@ class UsbMock:
 USB = UsbMock()
 
 
+# ---------------------------------------------------------------- simulated badge readers
+class BadgeMock:
+    """Per-port scan stats and the site's normalization settings. Swipes run through the real
+    core.badges.normalize(); on the reader the raw strings come from KeyAssembler on /dev/input."""
+    PREFIX = {"badge_in": "I", "badge_out": "O"}
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.settings = dict(badges.DEFAULT_SETTINGS)
+        self.revision = 1
+        self.stats = {}          # port -> {"last": {...}, "scans": n, "errors": n}
+
+    def _keyboards(self):
+        rows = usb.evaluate(usb.scan(USB.root), USB.assignments)
+        return {r["port"]: r for r in rows if r["type"] == "hid-keyboard" or
+                (r["status"] == "missing" and r["role"] in ("badge_in", "badge_out"))}
+
+    def swipe(self, port, raw=None, garbled=False):
+        kb = self._keyboards().get(port)
+        if not kb or kb["status"] == "missing":
+            return None
+        if raw is None:
+            uid = random.choice(USERS)[0]
+            card = uid.zfill(6)
+            if garbled:
+                card = card[:3] + "O" + card[4:]          # a misread character
+            raw = self.PREFIX.get(kb["role"], "") + "105:" + card
+        with self.lock:
+            result = badges.normalize(raw, self.settings)
+            st = self.stats.setdefault(port, {"last": None, "scans": 0, "errors": 0})
+            st["scans"] += 1
+            st["errors"] += 0 if result["ok"] else 1
+            st["last"] = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "raw": raw,
+                          "badge_id": result["badge_id"], "ok": result["ok"]}
+        SIM.emit("badge_raw", port=port, role=kb["role"], product=kb["product"], raw=raw, result=result)
+        return result
+
+    def background(self, uid):
+        port = next((p for p, a in USB.assignments.items() if a["role"] == "badge_in"), None)
+        if port:
+            self.swipe(port, raw="I105:" + uid.zfill(6))
+
+    def snapshot(self):
+        kbs = self._keyboards()
+        readers = []
+        for role in ("badge_in", "badge_out"):
+            port = next((p for p, a in USB.assignments.items() if a["role"] == role), None)
+            r = kbs.get(port) if port else None
+            st = self.stats.get(port, {})
+            readers.append({
+                "role": role, "label": usb.ROLES[role]["label"], "port": port,
+                "assigned": port is not None,
+                "status": r["status"] if r else ("missing" if port else "unassigned"),
+                "product": r["product"] if r else None,
+                "nodes": r["nodes"] if r else [],
+                "last_scan": st.get("last"), "scans_today": st.get("scans", 0), "errors_today": st.get("errors", 0),
+            })
+        others = [{"port": p, "product": r["product"], "role": r["role"], "nodes": r["nodes"]}
+                  for p, r in kbs.items() if r["role"] not in ("badge_in", "badge_out") and r["status"] != "missing"]
+        with self.lock:
+            return {"revision": self.revision, "settings": dict(self.settings),
+                    "readers": readers, "other_keyboards": others}
+
+    def save(self, revision, new):
+        with self.lock:
+            if revision != self.revision:
+                return 409, {"error": "conflict", "revision": self.revision}
+            merged = dict(badges.DEFAULT_SETTINGS, **(new if isinstance(new, dict) else {}))
+            errors = badges.validate_settings(merged)
+            if errors:
+                return 400, {"error": "invalid", "details": errors}
+            self.settings = {k: merged[k] for k in badges.DEFAULT_SETTINGS}
+            self.revision += 1
+            return 200, {"ok": True, "revision": self.revision}
+
+
+BADGES = BadgeMock()
+SIM.on_badge = BADGES.background
+
+
+# ---------------------------------------------------------------- simulated data drive
+class StorageMock:
+    """Drive presence comes from the USB mock (the port with role 'storage'); capacity and usage
+    are simulated. Warnings come from the real core.storage.warnings_for()."""
+    GB = 1024 ** 3
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.mounted = True
+        self.fs_type = "ext4"
+        self.size = int(28.6 * self.GB)
+        self.usage = {"outbox": 2_150_000, "events": 412_000_000, "logs": 85_000_000, "other": 12_000_000}
+        self.settings = {"retention_days_events": 90, "retention_days_logs": 30, "alert_free_pct": 10}
+        self.revision = 1
+
+    def _drive(self):
+        port = next((p for p, a in USB.assignments.items() if a["role"] == "storage"), None)
+        if not port:
+            return None, None
+        dev = {d["port"]: d for d in usb.scan(USB.root)}.get(port)
+        return port, dev
+
+    def snapshot(self):
+        port, dev = self._drive()
+        with self.lock:
+            if self.mounted:
+                self.usage["events"] += random.randint(0, 40_000)
+                self.usage["outbox"] = max(0, self.usage["outbox"] + random.randint(-50_000, 50_000))
+            present = dev is not None
+            node = (dev["nodes"][0] if dev and dev["nodes"] else None)
+            mount = None
+            cap = None
+            if present and self.mounted:
+                mount = {"device": (node + "1") if node else None, "mount_point": "/cust/rw_dir/data",
+                         "fs_type": self.fs_type, "read_only": False}
+                used = sum(self.usage.values()) + int(self.size * 0.012)      # filesystem overhead
+                cap = {"size": self.size, "used": used, "free": self.size - used}
+            items = [
+                {"id": "outbox", "label": "Event outbox (SQLite)", "path": "data/outbox.db", "bytes": self.usage["outbox"]},
+                {"id": "events", "label": "Event history (SQLite)", "path": "data/events.db", "bytes": self.usage["events"]},
+                {"id": "logs", "label": "Log files", "path": "data/logs/", "bytes": self.usage["logs"]},
+                {"id": "other", "label": "Other", "path": "data/", "bytes": self.usage["other"]},
+            ] if cap else []
+            return {
+                "revision": self.revision,
+                "assigned_port": port,
+                "drive": {
+                    "present": present, "port": port,
+                    "product": dev["product"] if dev else None, "manufacturer": dev["manufacturer"] if dev else None,
+                    "serial": dev["serial"] if dev else None, "node": node,
+                    "mounted": bool(mount), "mount": mount, "capacity": cap,
+                },
+                "usage": items,
+                "internal": {"path": "/cust/rw_dir", "size": 128 * 1024 ** 2, "used": 23 * 1024 ** 2,
+                             "free": 105 * 1024 ** 2, "buffering": present is False or not self.mounted},
+                "settings": dict(self.settings),
+                "warnings": storage.warnings_for(mount, cap, self.settings["alert_free_pct"]),
+                "dev_fs_type": self.fs_type,
+            }
+
+    def save(self, revision, new):
+        with self.lock:
+            if revision != self.revision:
+                return 409, {"error": "conflict", "revision": self.revision}
+            errors = []
+            if not isinstance(new, dict):
+                return 400, {"error": "invalid", "details": ["settings must be an object"]}
+            limits = {"retention_days_events": (1, 3650), "retention_days_logs": (1, 3650), "alert_free_pct": (1, 50)}
+            out = {}
+            for k, (lo, hi) in limits.items():
+                v = new.get(k)
+                if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
+                    errors.append(f"{k}: whole number {lo}–{hi}")
+                out[k] = v
+            if errors:
+                return 400, {"error": "invalid", "details": errors}
+            self.settings = out
+            self.revision += 1
+            return 200, {"ok": True, "revision": self.revision}
+
+    def action(self, what, confirm=None):
+        port, dev = self._drive()
+        if dev is None:
+            return 409, {"error": "no_drive"}
+        with self.lock:
+            if what == "eject":
+                self.mounted = False
+            elif what == "mount":
+                self.mounted = True
+            elif what == "format":
+                if confirm != "FORMAT":
+                    return 400, {"error": "confirm", "details": ["Type FORMAT to confirm."]}
+                self.fs_type = "ext4"
+                self.usage = {"outbox": 0, "events": 0, "logs": 0, "other": 0}
+                self.mounted = True
+            else:
+                return 404, {"error": "not_found"}
+        SIM.emit("storage_changed", action=what, port=port)
+        return 200, {"ok": True}
+
+
+STORAGE = StorageMock()
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(SimpleHTTPRequestHandler):
     server_version = "MeridianMock/0.1"
@@ -362,6 +551,14 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("hardware.view"):
                 self.send_json(USB.snapshot())
             return
+        if p == "/api/badges":
+            if self.require("hardware.view"):
+                self.send_json(BADGES.snapshot())
+            return
+        if p == "/api/storage":
+            if self.require("hardware.view"):
+                self.send_json(STORAGE.snapshot())
+            return
         if p == "/api/events":
             if self.require("dashboard.view"):
                 self.stream_events(url)
@@ -379,6 +576,40 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json({"error": "unknown_role"}, HTTPStatus.BAD_REQUEST)
             STATE["role"] = role
             return self.send_json({"ok": True, "role": role})
+        if p in ("/api/badges/preview", "/api/dev/badge/swipe", "/api/storage/eject", "/api/storage/mount",
+                 "/api/storage/format", "/api/dev/storage/fs"):
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
+            if p == "/api/badges/preview":
+                if not self.require("hardware.view"):
+                    return
+                settings = body.get("settings") or BADGES.settings
+                merged = dict(badges.DEFAULT_SETTINGS, **settings) if isinstance(settings, dict) else None
+                errors = badges.validate_settings(merged) if merged else ["settings must be an object"]
+                if errors:
+                    return self.send_json({"error": "invalid", "details": errors}, HTTPStatus.BAD_REQUEST)
+                raw = body.get("raw")
+                if not isinstance(raw, str) or len(raw) > 128:
+                    return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
+                return self.send_json(badges.normalize(raw, merged))
+            if p == "/api/dev/badge/swipe":  # MOCK-ONLY
+                if not self.require("hardware.view"):
+                    return
+                r = BADGES.swipe(body.get("port"), garbled=bool(body.get("garbled")))
+                if r is None:
+                    return self.send_json({"error": "no_keyboard_device"}, HTTPStatus.BAD_REQUEST)
+                return self.send_json({"ok": True})
+            if p == "/api/dev/storage/fs":  # MOCK-ONLY: flip ext4/vfat to see the warning
+                if not self.require("hardware.view"):
+                    return
+                STORAGE.fs_type = "vfat" if STORAGE.fs_type == "ext4" else "ext4"
+                return self.send_json({"ok": True, "fs_type": STORAGE.fs_type})
+            if not self.require("hardware.edit"):
+                return
+            status, result = STORAGE.action(p.rsplit("/", 1)[1], body.get("confirm"))
+            return self.send_json(result, status)
         if p == "/api/dev/usb/toggle":  # MOCK-ONLY: simulate unplugging / replugging a port
             if not self.require("hardware.view"):
                 return
@@ -402,6 +633,16 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError):
                 return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
             status, result = USB.save(body.get("revision"), body.get("assignments"))
+            return self.send_json(result, status)
+        if p in ("/api/badges/settings", "/api/storage/settings"):
+            if not self.require("hardware.edit"):
+                return
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
+            target = BADGES if p.startswith("/api/badges") else STORAGE
+            status, result = target.save(body.get("revision"), body.get("settings"))
             return self.send_json(result, status)
         return self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 

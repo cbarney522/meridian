@@ -36,12 +36,15 @@ app/                     → becomes cap/app/ in the CAP
   defs/menu.json         navigation; each page names the permission it needs
   core/access.py         role/permission/menu logic shared by mock and real server
   core/usb.py            USB discovery from sysfs + port-assignment checks (runs on the reader)
+  core/badges.py         key events -> scan strings, scan -> badge ID normalization
+  core/storage.py        data-drive mount lookup, capacity, warnings
   www/                   the UI: plain HTML/CSS/JS ES modules, no build step
     index.html
     css/meridian.css
     js/app.js            shell: session, menu, router, breadcrumb, live events
     js/menu.js           menu bar behaviour
-    js/api.js            API wrapper + safe DOM builder
+    js/api.js            API wrapper + safe DOM builder (h, fill)
+    js/ui.js             shared pieces: toast, save bar, chips, byte formatting
     js/pages/*.js        one module per page
 dev/mock_server.py       simulated reader for UI development
 dev/fake_sysfs.py        builds a fake sysfs USB tree (realistic R700 setup) for the mock and tests

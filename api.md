@@ -110,6 +110,57 @@ map of port → role. The server pins each newly assigned port to the VID:PID cu
 `400 {"error": "invalid", "details": [...]}` (bad port, unknown role, a single-use role on two ports).
 On the reader, assignments are stored in `config.json` in `rw_dir`.
 
+## Badge readers
+
+### `GET /api/badges` — needs `hardware.view`
+```json
+{
+  "revision": 2,
+  "settings": {"strip_prefixes": ["I", "O"], "strip_suffixes": [], "separator": ":", "output": "card",
+               "strip_leading_zeros": true, "pattern": "^\\d{1,10}$", "end_of_scan": "enter", "timeout_ms": 100},
+  "readers": [{"role": "badge_in", "label": "Badge reader (in)", "port": "1-1.1", "assigned": true,
+               "status": "ok", "product": "pcProx Plus RDR-80081AKU", "nodes": ["/dev/input/event2"],
+               "last_scan": {"ts": "...", "raw": "I105:010442", "badge_id": "10442", "ok": true},
+               "scans_today": 14, "errors_today": 1}],
+  "other_keyboards": [{"port": "1-1.4", "product": "1950g", "role": "scanner", "nodes": ["/dev/input/event4"]}]
+}
+```
+`status` as for USB rows, plus `unassigned` when no port has the role. Normalization is
+`core/badges.py: normalize()`; settings are checked by `validate_settings()`.
+
+### `PUT /api/badges/settings` — needs `hardware.edit`
+`{"revision": 2, "settings": {...}}` → `200 {"ok": true, "revision": 3}` · `409` · `400 {"details": [...]}`.
+
+### `POST /api/badges/preview` — needs `hardware.view`
+`{"raw": "I105:0010442", "settings": {...optional, defaults to saved}}` →
+`{"ok": true, "badge_id": "10442", "facility": "105", "card": "10442", "steps": ["removed prefix 'I'", ...], "error": null}`
+
+## Data drive
+
+### `GET /api/storage` — needs `hardware.view`
+```json
+{
+  "revision": 1, "assigned_port": "1-2",
+  "drive": {"present": true, "port": "1-2", "product": "Ultra", "manufacturer": "SanDisk", "serial": "...",
+            "node": "/dev/sda", "mounted": true,
+            "mount": {"device": "/dev/sda1", "mount_point": "...", "fs_type": "ext4", "read_only": false},
+            "capacity": {"size": 30709016166, "used": 879638995, "free": 29829377171}},
+  "usage": [{"id": "outbox", "label": "Event outbox (SQLite)", "path": "data/outbox.db", "bytes": 2103150}],
+  "internal": {"path": "/cust/rw_dir", "size": 134217728, "used": 24117248, "free": 110100480, "buffering": false},
+  "settings": {"retention_days_events": 90, "retention_days_logs": 30, "alert_free_pct": 10},
+  "warnings": ["Filesystem is vfat; ext4 is recommended ..."]
+}
+```
+Mount lookup, capacity and warnings come from `core/storage.py`. The drive is the port with role `storage`.
+
+### `PUT /api/storage/settings` — needs `hardware.edit`
+`{"revision": 1, "settings": {...}}`; each value a whole number (retention 1–3650 days, alert 1–50 %).
+
+### `POST /api/storage/eject` · `/api/storage/mount` · `/api/storage/format` — need `hardware.edit`
+Format requires `{"confirm": "FORMAT"}` and erases the drive (including unsent events), reformats
+ext4 and mounts it. `409 {"error": "no_drive"}` if no drive is present. On the reader these are
+done by the engine so the outbox writer is paused first.
+
 ## Live events
 
 ### `GET /api/events` — needs `dashboard.view`
@@ -124,10 +175,16 @@ Server-Sent Events (`text/event-stream`). Each message has `id:` (monotonic), `e
 | `gpi_change` | `input`, `state` |
 | `rule_fired` | `rule`, `detail` |
 | `usb_attached` / `usb_detached` | `port`, `product` |
+| `badge_raw` | `port`, `role`, `product`, `raw`, `result` (as `/api/badges/preview`) — every scan from a keyboard-type device |
+| `storage_changed` | `action` (`eject`, `mount`, `format`), `port` |
 
 All events also carry `id`, `type`, `ts` (ISO 8601 local time).
 
 ## Mock only
+
+### `POST /api/dev/badge/swipe` `{"port": "1-1.1", "garbled": false}` · `POST /api/dev/storage/fs`
+Simulate a badge swipe on a keyboard-type port (optionally misread), and flip the simulated
+drive between ext4 and vfat. `GET /api/storage` also returns `dev_fs_type` in the mock.
 
 ### `POST /api/dev/usb/toggle` `{"port": "1-1.2"}`
 Simulates unplugging / replugging a port (and anything behind it). `GET /api/usb/devices` also
