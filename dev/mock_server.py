@@ -28,13 +28,21 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb, badges, storage  # noqa: E402
+from core import usb, badges, storage, accounts_api  # noqa: E402
+from core.config import Store  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
 import fake_sysfs  # noqa: E402
 
 WWW = os.path.join(ROOT, "app", "www")
 ACCESS = Access()
 STATE = {"role": "developer", "user": "cliff"}
+# Accounts use the real core.config.Store, in a throwaway folder, seeded with a few examples.
+ACCOUNTS = Store(tempfile.mkdtemp(prefix="meridian-accounts-"))
+for _u, _n, _r in (("cliff", "Cliff Barney", "developer"), ("admin", "Default administrator", "developer"),
+                   ("mreyes", "M. Reyes", "site_admin"), ("jsmith", "J. Smith", "technician"),
+                   ("tokafor", "T. Okafor", "supervisor"), ("qa", "Quality viewer", "viewer")):
+    ACCOUNTS.create_account(_u, _n, _r, "Mock-pass-1", set(ACCESS.roles))
+ACCOUNTS.record_login("cliff")
 STARTED = time.time()
 
 SECURITY_HEADERS = {
@@ -553,6 +561,8 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("site.view"):
                 self.send_json(FLEET.snapshot())
             return
+        if p == "/api/accounts" or p.startswith("/api/accounts/"):
+            return self.accounts("GET")
         if p == "/api/dev/diagnostics":
             if self.require("dev.tools"):
                 self.send_json({"diag": "Meridian diagnostics (mock server)\nkernel:   Linux mock\n--- USB (sysfs)\n  1-1.1  0c27:3bfa  pcProx Plus\n",
@@ -577,8 +587,29 @@ class Handler(SimpleHTTPRequestHandler):
             return
         return self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
+    def accounts(self, method):
+        if not self.require("accounts.manage"):
+            return
+        body = {}
+        if method in ("POST", "PUT"):
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
+        actor = {"user": STATE["user"], "role": STATE["role"]}
+        status, result = accounts_api.handle(method, urlparse(self.path).path, body, actor, ACCOUNTS, ACCESS, None)
+        return self.send_json(result, status)
+
+    def do_DELETE(self):
+        p = urlparse(self.path).path
+        if p.startswith("/api/accounts/"):
+            return self.accounts("DELETE")
+        return self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
     def do_POST(self):
         p = urlparse(self.path).path
+        if p == "/api/accounts" or p.startswith("/api/accounts/"):
+            return self.accounts("POST")
         if p in ("/api/login", "/api/logout"):   # MOCK-ONLY: no real accounts; any sign-in works
             return self.send_json({"ok": True, "must_change_password": False})
         if p == "/api/dev/role":  # MOCK-ONLY role switcher
@@ -639,6 +670,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_PUT(self):
         p = urlparse(self.path).path
+        if p.startswith("/api/accounts/"):
+            return self.accounts("PUT")
         if p == "/api/usb/assignments":
             if not self.require("hardware.edit"):
                 return

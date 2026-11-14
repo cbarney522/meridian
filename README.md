@@ -71,6 +71,7 @@ app/                     → /cust/app on the reader
   core/inputs.py         USB hot-plug watcher, badge-reader listener on /dev/input
   core/tls.py            per-reader self-signed certificate
   core/sessions.py       sign-in sessions and login throttling
+  core/accounts_api.py   System › Accounts API (shared by reader and mock server)
   www/                   the UI: plain HTML/CSS/JS ES modules, no build step
     index.html, login.html
     css/meridian.css

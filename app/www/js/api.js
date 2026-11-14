@@ -48,6 +48,11 @@ export const api = {
   setRole: (role) => request("POST", "api/dev/role", { role }),
   changePassword: (current, next) => request("POST", "api/account/password", { current, new: next }),
   logout: () => request("POST", "api/logout", {}),
+  accounts: () => request("GET", "api/accounts"),
+  createAccount: (acct) => request("POST", "api/accounts", acct),
+  updateAccount: (user, changes) => request("PUT", "api/accounts/" + encodeURIComponent(user), changes),
+  resetAccountPassword: (user) => request("POST", "api/accounts/" + encodeURIComponent(user) + "/reset-password", {}),
+  deleteAccount: (user) => request("DELETE", "api/accounts/" + encodeURIComponent(user)),
 };
 
 // Small DOM builder. Text always goes through textContent, never innerHTML,

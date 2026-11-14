@@ -282,3 +282,13 @@ a { color: var(--accent-strong); }
 .login-error { color: var(--bad); background: #fbe5e3; border-radius: 4px; padding: 7px 10px; font-size: 13px; margin: 0 0 12px; }
 .login-error[hidden] { display: none; }
 .login-foot { color: var(--muted); font-size: 12px; text-align: center; margin: 18px 0 0; }
+
+/* ---------- accounts ---------- */
+.accounts-table th { padding: 9px 12px; color: var(--muted); font-weight: 600; }
+.row-actions { white-space: nowrap; text-align: right; }
+.row-actions .btn + .btn { margin-left: 6px; }
+.radio { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 2px 0; }
+.dialog select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+.pw-row { display: flex; gap: 8px; margin: 10px 0 4px; }
+.temp-pw { flex: 1; font-size: 16px !important; letter-spacing: .05em; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: #f6f8fa; }
+.dialog { width: min(460px, calc(100vw - 32px)); }

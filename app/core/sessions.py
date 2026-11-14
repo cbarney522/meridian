@@ -52,6 +52,12 @@ class Sessions:
             for t in [t for t, s in self.by_token.items() if s["user"] == user and t != keep]:
                 del self.by_token[t]
 
+    def count_user(self, user):
+        now = self.clock()
+        with self.lock:
+            return sum(1 for s in self.by_token.values() if s["user"] == user
+                       and now - s["seen"] <= self.idle and now - s["created"] <= self.absolute)
+
     def count(self):
         with self.lock:
             return len(self.by_token)

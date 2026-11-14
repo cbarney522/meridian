@@ -68,6 +68,29 @@ the user's other sessions are signed out.
 `200 {"ok": true, "perm": "hardware.view"}` · `403 {"error": "forbidden", "needs": "..."}` · `404`.
 The router calls this before rendering any page.
 
+## Accounts (System › Accounts) — need `accounts.manage`
+
+### `GET /api/accounts`
+```json
+{"me": "admin",
+ "accounts": [{"user": "jsmith", "name": "J. Smith", "role": "technician", "role_label": "Technician",
+               "disabled": false, "must_change": true, "created": "...", "last_login": null,
+               "sessions": 0, "you": false, "editable": true}],
+ "roles": [{"id": "developer", "label": "Developer", "description": "...", "assignable": true}]}
+```
+### `POST /api/accounts` `{"user", "name", "role", "password"?}`
+No password → a temporary one is generated and returned once: `201 {"ok": true, "temporary_password": "k7Rq-mX2p-9vTe"}`.
+User names: 2–32 characters, `a-z 0-9 . _ -`. New accounts must change their password at first sign-in.
+### `PUT /api/accounts/<user>` `{"name"?, "role"?, "disabled"?}`
+### `POST /api/accounts/<user>/reset-password` `{"password"?}` → `{"ok": true, "temporary_password": "..."}`
+### `DELETE /api/accounts/<user>`
+
+Rules (403 / 400 with `details`): only a Developer may assign the developer role or change a
+Developer account; nobody may change the role of, disable, delete or reset **their own** account;
+at least one enabled account with `accounts.manage` must remain. Disabling, deleting or resetting
+signs the user out immediately; disabled accounts can't sign in. The mock server runs the same
+logic (`core/accounts_api.py`) on a throwaway account store.
+
 ## Status
 
 ### `GET /api/status` — needs `dashboard.view`

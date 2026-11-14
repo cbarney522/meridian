@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
-from core.config import Store  # noqa: E402
+from core.config import AccountError, Store, generate_password  # noqa: E402
 from core.inputs import parse_events  # noqa: E402
 
 logging.disable(logging.CRITICAL)   # these tests deliberately trigger warnings (corrupt config, default login)
@@ -56,6 +56,77 @@ class StoreTests(unittest.TestCase):
         self.s.change_password("admin", "changeme", "Longenough1")
         self.s.ensure_default_account()
         self.assertIsNotNone(self.s.authenticate("admin", "Longenough1"))
+
+
+ROLES = {"developer", "site_admin", "technician", "viewer"}
+MANAGERS = {"developer", "site_admin"}
+
+
+class AccountAdminTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = Store(self.tmp.name)
+        self.s.ensure_default_account()                       # admin (developer)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_create_validates(self):
+        self.s.create_account("jsmith", "J. Smith", "technician", "Temp-pass-1", ROLES)
+        a = {x["user"]: x for x in self.s.list_accounts()}["jsmith"]
+        self.assertEqual((a["name"], a["role"], a["must_change"], a["disabled"]), ("J. Smith", "technician", True, False))
+        for bad in ("J", "UPPER", "has space", "x" * 40, "-lead"):
+            with self.assertRaises(AccountError):
+                self.s.create_account(bad, "", "technician", "Temp-pass-1", ROLES)
+        with self.assertRaises(AccountError):
+            self.s.create_account("jsmith", "", "technician", "Temp-pass-1", ROLES)     # duplicate
+        with self.assertRaises(AccountError):
+            self.s.create_account("bob", "", "wizard", "Temp-pass-1", ROLES)           # unknown role
+        with self.assertRaises(AccountError):
+            self.s.create_account("bob", "", "viewer", "short", ROLES)
+
+    def test_disable_blocks_sign_in_and_session_lookup(self):
+        self.s.create_account("tech", "", "technician", "Temp-pass-1", ROLES)
+        self.assertIsNotNone(self.s.authenticate("tech", "Temp-pass-1"))
+        self.assertTrue(self.s.update_account("tech", {"disabled": True}, ROLES, MANAGERS, "admin"))
+        self.assertIsNone(self.s.authenticate("tech", "Temp-pass-1"))
+        self.assertIsNone(self.s.account("tech"))
+        self.s.update_account("tech", {"disabled": False}, ROLES, MANAGERS, "admin")
+        self.assertIsNotNone(self.s.account("tech"))
+
+    def test_self_protection_and_last_manager(self):
+        with self.assertRaises(AccountError):
+            self.s.update_account("admin", {"disabled": True}, ROLES, MANAGERS, "admin")
+        with self.assertRaises(AccountError):
+            self.s.update_account("admin", {"role": "viewer"}, ROLES, MANAGERS, "admin")
+        with self.assertRaises(AccountError):
+            self.s.delete_account("admin", MANAGERS, "admin")
+        self.s.create_account("boss", "", "site_admin", "Temp-pass-1", ROLES)
+        # boss may not remove the only other manager... but admin remains, so demoting admin via boss is fine
+        self.s.update_account("admin", {"role": "viewer"}, ROLES, MANAGERS, "boss")
+        with self.assertRaises(AccountError):        # boss is now the last manager; can't be disabled by admin
+            self.s.update_account("boss", {"disabled": True}, ROLES, MANAGERS, "admin")
+        with self.assertRaises(AccountError):
+            self.s.delete_account("boss", MANAGERS, "admin")
+
+    def test_reset_generates_and_forces_change(self):
+        self.s.create_account("tech", "", "technician", "Temp-pass-1", ROLES)
+        self.s.change_password("tech", "Temp-pass-1", "Chosen-pass-2")
+        pw = self.s.reset_password("tech", "")
+        self.assertRegex(pw, r"^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$")
+        self.assertIsNone(self.s.authenticate("tech", "Chosen-pass-2"))
+        self.assertTrue(self.s.authenticate("tech", pw)["must_change"])
+        with self.assertRaises(AccountError):
+            self.s.reset_password("ghost", "")
+
+    def test_delete_and_record_login(self):
+        self.s.create_account("tech", "", "technician", "Temp-pass-1", ROLES)
+        self.s.record_login("tech")
+        self.assertIsNotNone({x["user"]: x for x in self.s.list_accounts()}["tech"]["last_login"])
+        self.s.delete_account("tech", MANAGERS, "admin")
+        self.assertNotIn("tech", [x["user"] for x in self.s.list_accounts()])
+        chars = set("".join(generate_password() for _ in range(50)).replace("-", ""))
+        self.assertFalse(chars & set("0O1lI"))               # ambiguous characters never used
 
 
 class ParseEventsTests(unittest.TestCase):

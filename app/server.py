@@ -35,6 +35,7 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
+from core import accounts_api  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
 
 WWW_DIR = os.path.join(APP_DIR, "www")
@@ -391,6 +392,7 @@ class Handler(BaseHTTPRequestHandler):
             log.warning("failed sign-in for %r from %s", user, self.client_address[0])
             return self.send_json({"error": "bad_credentials", "details": ["Wrong user name or password."]}, 401)
         APP.throttle.success(ip, ukey)
+        APP.store.record_login(user)
         token = APP.sessions.create(user)
         log.info("%s signed in from %s", user, self.client_address[0])
         return self.send_json({"ok": True, "must_change_password": acct["must_change"]}, 200,
@@ -469,6 +471,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.require(perm):
                 self.send_json(fn())
             return
+        if p == "/api/accounts" or p.startswith("/api/accounts/"):
+            return self.accounts("GET")
         if p == "/api/dev/diagnostics":
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
@@ -487,6 +491,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.same_origin() or not self.authenticate():
             return
         p = urlparse(self.path).path
+        if p.startswith("/api/accounts/"):
+            return self.accounts("PUT")
         handlers = {
             "/api/usb/assignments": ("hardware.edit", APP.usb_save, "assignments"),
             "/api/badges/settings": ("hardware.edit", APP.badges_save, "settings"),
@@ -518,6 +524,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.logout()
         if not self.authenticate():
             return
+        if p == "/api/accounts" or p.startswith("/api/accounts/"):
+            return self.accounts("POST")
         try:
             body = self.read_json()
         except (ValueError, json.JSONDecodeError):
@@ -548,6 +556,33 @@ class Handler(BaseHTTPRequestHandler):
                     "Drives are mounted with 'sync', so unplugging one is fairly safe."]}, 409)
             return
         return self.send_json({"error": "not_found"}, 404)
+
+    def do_DELETE(self):
+        p = urlparse(self.path).path
+        if not self.same_origin() or not self.authenticate():
+            return
+        if p.startswith("/api/accounts/"):
+            return self.accounts("DELETE")
+        return self.send_json({"error": "not_found"}, 404)
+
+    def accounts(self, method):
+        if not self.require("accounts.manage"):
+            return
+        body = {}
+        if method in ("POST", "PUT"):
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, 400)
+            if not isinstance(body, dict):
+                return self.send_json({"error": "bad_request"}, 400)
+        if method != "GET" and not APP.store.writable:
+            return self.send_json({"error": "read_only", "details": [f"{APP.store.dir} is not writable."]}, 503)
+        status, result = accounts_api.handle(method, urlparse(self.path).path, body, self.account,
+                                             APP.store, APP.access, APP.sessions)
+        if method != "GET" and status < 300:
+            log.info("%s: %s %s", self.account["user"], method, urlparse(self.path).path)
+        return self.send_json(result, status)
 
     def stream_events(self):
         last = self.headers.get("Last-Event-ID")
