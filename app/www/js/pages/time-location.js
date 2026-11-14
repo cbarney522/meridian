@@ -108,15 +108,22 @@ export function render(root, ctx) {
       el.addEventListener("input", () => { f[key] = el.value; changed(); });
       return el;
     };
-    // time zone: free text with a searchable list of every zone
-    const zl = h("datalist", { id: "tz-list" }, state.data.zones.map((z) => h("option", { value: z })));
-    const tz = h("input", { type: "text", list: "tz-list", value: f.timezone, disabled: dis, spellcheck: "false", autocomplete: "off" });
-    tz.addEventListener("input", () => { f.timezone = tz.value.trim(); changed(); });
+    // time zone: a dropdown grouped by region, common zones first (typing a letter jumps in the list)
+    const groups = {};
+    for (const z of state.data.zones) (groups[z.includes("/") ? z.split("/")[0] : "Other"] ||= []).push(z);
+    const label = (z) => z.replace(/_/g, " ");
+    const tz = h("select", { disabled: dis, "aria-label": "Time zone" },
+      h("optgroup", { label: "Common" }, state.data.common_zones.map((z) => h("option", { value: z, selected: f.timezone === z }, label(z)))),
+      Object.keys(groups).sort().map((g) => h("optgroup", { label: g },
+        groups[g].map((z) => h("option", { value: z, selected: f.timezone === z && !state.data.common_zones.includes(z) }, label(z))))));
+    if (!state.data.zones.includes(f.timezone) && f.timezone) tz.prepend(h("option", { value: f.timezone, selected: true }, `${f.timezone} (not on this reader)`));
+    tz.addEventListener("change", () => { f.timezone = tz.value; changed(); });
+    const setTz = (z) => { f.timezone = z; tz.value = z; changed(); };
     const common = h("div", { class: "chips" }, state.data.common_zones.slice(0, 6).map((z) =>
-      h("button", { type: "button", class: "btn btn-small", disabled: dis, onclick: () => { tz.value = f.timezone = z; changed(); } }, z.split("/").pop().replace("_", " "))));
+      h("button", { type: "button", class: "btn btn-small", disabled: dis, onclick: () => setTz(z) }, z.split("/").pop().replace("_", " "))));
     const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const useBrowser = browserTz && browserTz !== f.timezone && !dis
-      ? h("button", { type: "button", class: "btn btn-small", onclick: () => { tz.value = f.timezone = browserTz; changed(); } }, `Use this computer's (${browserTz})`) : null;
+      ? h("button", { type: "button", class: "btn btn-small", style: { alignSelf: "flex-start" }, onclick: () => setTz(browserTz) }, `Use this computer's (${browserTz})`) : null;
 
     const fmt = h("div", {}, [[false, "12-hour (2:30 PM)"], [true, "24-hour (14:30)"]].map(([v, l]) => {
       const r = h("input", { type: "radio", name: "clockfmt", checked: f.clock_24h === v, disabled: dis });
@@ -169,7 +176,6 @@ export function render(root, ctx) {
         field("Latitude", lat, "Decimal degrees, north positive. Paste “lat, long” from a map into either box."),
         field("Longitude", lon, "Decimal degrees, west negative."),
         h("div", { class: "field" }, h("span", { class: "field-label" }, " "), h("div", { class: "actions" }, geo, mapLink), geoMsg)),
-      zl,
       h("p", { class: "hint" }, "Coordinates give rules today's sunrise and sunset (for example, turn the entry light on at dusk)."));
   }
 
