@@ -174,6 +174,11 @@ Format requires `{"confirm": "FORMAT"}` and erases the drive (including unsent e
 ext4 and mounts it. `409 {"error": "no_drive"}` if no drive is present. On the reader these are
 done by the engine so the outbox writer is paused first.
 
+## Developer tools
+
+### `GET /api/dev/diagnostics` — needs `dev.tools`
+`{"diag": "<rw_dir/diag.txt>", "log": "<last 64 KB of rw_dir/log/meridian.log>", "badge_listener": {...}, "app_version": "...", "data_dir": "..."}`
+
 ## Live events
 
 ### `GET /api/events` — needs `dashboard.view`

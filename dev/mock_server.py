@@ -547,6 +547,12 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("site.view"):
                 self.send_json(FLEET.snapshot())
             return
+        if p == "/api/dev/diagnostics":
+            if self.require("dev.tools"):
+                self.send_json({"diag": "Meridian diagnostics (mock server)\nkernel:   Linux mock\n--- USB (sysfs)\n  1-1.1  0c27:3bfa  pcProx Plus\n",
+                                "log": "2026-11-14 04:00:00 INFO meridian: mock server — no real log\n",
+                                "badge_listener": None, "app_version": "0.1.0-dev", "data_dir": "(mock)"})
+            return
         if p == "/api/usb/devices":
             if self.require("hardware.view"):
                 self.send_json(USB.snapshot())

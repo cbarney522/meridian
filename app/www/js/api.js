@@ -38,6 +38,7 @@ export const api = {
   saveStorageSettings: (revision, settings) => request("PUT", "api/storage/settings", { revision, settings }),
   storageAction: (action, confirm) => request("POST", "api/storage/" + action, confirm ? { confirm } : {}),
   devStorageFs: () => request("POST", "api/dev/storage/fs", {}),
+  diagnostics: () => request("GET", "api/dev/diagnostics"),
   routeCheck: (route) => request("GET", "api/route-check?route=" + encodeURIComponent(route)),
   setRole: (role) => request("POST", "api/dev/role", { role }),
   changePassword: (current, next) => request("POST", "api/account/password", { current, new: next }),

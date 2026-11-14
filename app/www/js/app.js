@@ -6,12 +6,14 @@ import * as site from "./pages/site.js";
 import * as usbDevices from "./pages/usb-devices.js";
 import * as badgeReaders from "./pages/badge-readers.js";
 import * as storagePage from "./pages/storage.js";
+import * as debugLog from "./pages/debug-log.js";
 import * as placeholder from "./pages/placeholder.js";
 
 // Pages that have real implementations. Everything else in the menu gets the placeholder
 // until it's built, so the whole navigation works from day one.
 const PAGES = { "/dashboard": dashboard, "/site": site, "/hardware/usb": usbDevices,
-                "/hardware/badges": badgeReaders, "/hardware/storage": storagePage };
+                "/hardware/badges": badgeReaders, "/hardware/storage": storagePage,
+                "/dev/debug-log": debugLog };
 
 const $ = (id) => document.getElementById(id);
 const ctx = { session: null, menuIndex: new Map(), events: null };

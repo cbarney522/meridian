@@ -255,6 +255,23 @@ class App:
             return 409, {"error": "conflict"}
         return 200, {"ok": True, "revision": rev}
 
+    # -- diagnostics (developer tools)
+    def diagnostics(self, log_bytes=65536):
+        def read(path, tail=None):
+            try:
+                with open(path, "rb") as f:
+                    if tail:
+                        f.seek(0, os.SEEK_END)
+                        f.seek(max(0, f.tell() - tail))
+                    return f.read().decode("utf-8", "replace")
+            except OSError as e:
+                return f"({e.strerror}: {path})"
+        d = self.args.data_dir
+        return {"diag": read(os.path.join(d, "diag.txt")),
+                "log": read(os.path.join(d, "log", "meridian.log"), log_bytes),
+                "badge_listener": self.badges.status() if self.badges else None,
+                "app_version": app_version(), "data_dir": d}
+
     # -- status
     def status(self):
         assign = self.usb_assignments()
@@ -392,6 +409,10 @@ class Handler(BaseHTTPRequestHandler):
             perm, fn = routes[p]
             if self.require(perm):
                 self.send_json(fn())
+            return
+        if p == "/api/dev/diagnostics":
+            if self.require("dev.tools"):
+                self.send_json(APP.diagnostics())
             return
         if p == "/api/site/readers":
             if self.require("site.view"):
