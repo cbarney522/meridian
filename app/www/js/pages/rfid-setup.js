@@ -12,7 +12,7 @@ export function render(root, ctx) {
   const invCard = h("section", { class: "card" });
   const zonesCard = h("section", { class: "card" });
   const trackCard = h("section", { class: "card full" });
-  const bar = saveBar({ onSave: save, onDiscard: () => { state.form = clone(state.data.settings); drawForms(); changed(); } });
+  const bar = saveBar({ onSave: save, onDiscard: () => { state.form = clone(state.data.settings); buildInventory(); drawForms(); changed(); } });
 
   root.append(
     h("h1", {}, "Inventory & zones"),
@@ -26,47 +26,70 @@ export function render(root, ctx) {
     try {
       const d = await api.rfid(refresh);
       state.data = d;
-      if (rebuild || !state.form) { state.form = clone(d.settings); drawForms(); changed(); }
+      if (rebuild || !state.form) { state.form = clone(d.settings); buildInventory(); drawForms(); changed(); }
       drawInventory(); drawZoneCounts();
     } catch (err) { fill(invCard, h("div", { class: "notice bad" }, "Can't load RFID settings: ", errText(err))); }
   }
 
   // ---------- inventory (live state + start/stop)
-  function drawInventory() {
-    const s = state.data.status, f = state.form;
-    const statePill = s.reader_error && !s.reader_status ? h("span", { class: "pill bad" }, "Reader API unavailable")
-      : s.running ? h("span", { class: "pill ok" }, `Running: ${s.active_preset || "?"}`) : h("span", { class: "pill neutral" }, "Stopped");
-    const presets = state.data.presets;
-    const sel = h("select", { disabled: !canEdit, "aria-label": "Preset" },
-      h("option", { value: "", selected: !f.preset }, presets.length ? "Choose a preset…" : "No presets found"),
-      presets.map((p) => h("option", { value: p, selected: f.preset === p }, p)),
-      f.preset && !presets.includes(f.preset) ? h("option", { value: f.preset, selected: true }, `${f.preset} (not on the reader)`) : null);
-    sel.addEventListener("change", () => { f.preset = sel.value; changed(); });
+  // Built once; the 2-second refresh only updates the values and buttons in place, so an open
+  // dropdown or a focused control is never replaced under the user's pointer.
+  const inv = {};
+  function buildInventory() {
+    const f = state.form;
+    inv.state = h("dd"); inv.stream = h("dd"); inv.rate = h("dd"); inv.count = h("dd");
+    inv.error = h("div");
+    inv.sel = h("select", { disabled: !canEdit, "aria-label": "Preset" });
+    inv.sel.addEventListener("change", () => { f.preset = inv.sel.value; changed(); });
+    inv.presetsKey = null;
     const auto = h("input", { type: "checkbox", checked: f.auto_start, disabled: !canEdit });
     auto.addEventListener("change", () => { f.auto_start = auto.checked; changed(); });
-    const start = h("button", { type: "button", class: "btn btn-primary", disabled: !canEdit || state.busy || !f.preset }, s.running ? "Restart" : "Start inventory");
-    const stop = h("button", { type: "button", class: "btn", disabled: !canEdit || state.busy || !s.running }, "Stop");
-    start.addEventListener("click", () => act(() => api.rfidStart(f.preset), `Inventory started with “${f.preset}”.`));
-    stop.addEventListener("click", () => act(() => api.rfidStop(), "Inventory stopped."));
-    const refresh = h("button", { type: "button", class: "btn btn-small", disabled: state.busy }, "Refresh list");
-    refresh.addEventListener("click", () => load(true));
+    inv.start = h("button", { type: "button", class: "btn btn-primary" });
+    inv.stop = h("button", { type: "button", class: "btn" }, "Stop");
+    inv.start.addEventListener("click", () => act(() => api.rfidStart(state.form.preset), `Inventory started with “${state.form.preset}”.`));
+    inv.stop.addEventListener("click", () => act(() => api.rfidStop(), "Inventory stopped."));
+    inv.refresh = h("button", { type: "button", class: "btn btn-small" }, "Refresh list");
+    inv.refresh.addEventListener("click", () => load(true));
     const impinjUi = `https://${location.hostname}/`;
     fill(invCard, h("h2", {}, "Inventory"),
       h("dl", { class: "kv" },
-        h("dt", {}, "State"), h("dd", {}, statePill),
-        h("dt", {}, "Tag stream"), h("dd", {}, s.stream_connected ? h("span", { class: "pill ok" }, "Connected")
-          : h("span", { class: "pill bad", title: s.stream_error || "" }, "Not connected")),
-        h("dt", {}, "Reads / s"), h("dd", {}, String(s.read_rate)),
-        h("dt", {}, "Tags in field"), h("dd", {}, String(s.tags_in_field))),
-      s.reader_error ? h("div", { class: "notice warn", style: { marginTop: "10px" } }, s.reader_error,
-        /401|403|login/i.test(s.reader_error) ? [" — check the reader login on ", h("a", { href: "#/system/about" }, "About this reader"), "."] : null) : null,
+        h("dt", {}, "State"), inv.state, h("dt", {}, "Tag stream"), inv.stream,
+        h("dt", {}, "Reads / s"), inv.rate, h("dt", {}, "Tags in field"), inv.count),
+      inv.error,
       h("div", { class: "field", style: { marginTop: "12px" } }, h("span", { class: "field-label" }, "Preset"),
-        h("div", { class: "actions" }, sel, refresh),
+        h("div", { class: "actions" }, inv.sel, inv.refresh),
         h("span", { class: "field-help" }, "Presets are created and tuned (antennas, power, search mode) in the ",
           h("a", { href: impinjUi, target: "_blank", rel: "noopener noreferrer" }, "Impinj web UI ↗"),
           " under Profile Presets. Use a reporting interval of 0 so every read is reported.")),
       h("label", { class: "radio", style: { marginTop: "8px" } }, auto, h("span", {}, "Start this preset automatically when the reader starts")),
-      h("div", { class: "actions", style: { marginTop: "12px" } }, start, stop));
+      h("div", { class: "actions", style: { marginTop: "12px" } }, inv.start, inv.stop));
+  }
+
+  function drawInventory() {
+    if (!inv.sel) return;
+    const s = state.data.status, f = state.form;
+    fill(inv.state, s.reader_error && !s.reader_status ? h("span", { class: "pill bad" }, "Reader API unavailable")
+      : s.running ? h("span", { class: "pill ok" }, `Running: ${s.active_preset || "?"}`) : h("span", { class: "pill neutral" }, "Stopped"));
+    fill(inv.stream, s.stream_connected ? h("span", { class: "pill ok" }, "Connected")
+      : h("span", { class: "pill bad", title: s.stream_error || "" }, "Not connected"));
+    inv.rate.textContent = String(s.read_rate);
+    inv.count.textContent = String(s.tags_in_field);
+    fill(inv.error, s.reader_error ? h("div", { class: "notice warn", style: { marginTop: "10px" } }, s.reader_error,
+      /401|403|login/i.test(s.reader_error) ? [" — check the reader login on ", h("a", { href: "#/system/about" }, "About this reader"), "."] : null) : null);
+    // rebuild the options only when the list (or the chosen preset) actually changed, and never while it's open/focused
+    const presets = state.data.presets;
+    const key = JSON.stringify([presets, f.preset]);
+    if (key !== inv.presetsKey && document.activeElement !== inv.sel) {
+      inv.presetsKey = key;
+      fill(inv.sel,
+        h("option", { value: "", selected: !f.preset }, presets.length ? "Choose a preset…" : "No presets found"),
+        presets.map((p) => h("option", { value: p, selected: f.preset === p }, p)),
+        f.preset && !presets.includes(f.preset) ? h("option", { value: f.preset, selected: true }, `${f.preset} (not on the reader)`) : null);
+    }
+    inv.start.textContent = s.running ? "Restart" : "Start inventory";
+    inv.start.disabled = !canEdit || state.busy || !f.preset;
+    inv.stop.disabled = !canEdit || state.busy || !s.running;
+    inv.refresh.disabled = state.busy;
   }
 
   async function act(fn, ok) {
