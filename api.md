@@ -307,3 +307,20 @@ The reader's clock stays on UTC and is set by chronyd; Meridian can't change the
 | `…/ack` | reader → broker | `{"id", "cmd", "ok", "result" \| "error", "ts"}` |
 
 Commands: `ping`, `identify` (`args.seconds`, 1–120), `status`, `info`. Unknown, malformed or expired commands get `ok:false`. While disconnected, outgoing messages wait in a 1000-message in-memory queue (oldest dropped). The client is paho-mqtt 2.2.0, vendored in `app/vendor/paho` (EPL-2.0 / EDL-1.0).
+
+### Event types
+
+Defined in `app/defs/events.json` (also returned as `event_types` by `GET /api/mqtt` and shown on the MQTT page). Every payload carries `type` and `ts` (reader local time, ISO 8601). A test checks that every type the code emits is listed with `built: true`.
+
+| Type | In this build | Meaning | Sample payload |
+|---|---|---|---|
+| `usb_attached` | yes | A USB device appeared on a reader port or hub port. | `{"type":"usb_attached","port":"1-1.2","product":"USB Flash Disk","ts":"2026-11-14T08:15:02"}` |
+| `usb_detached` | yes | A USB device was removed. | `{"type":"usb_detached","port":"1-1.2","product":"USB Flash Disk","ts":"2026-11-14T08:16:40"}` |
+| `badge` | yes | A keyboard-type device (badge reader, barcode scanner) sent a scan. 'raw' is exactly what it typed; 'result' is the badge ID after this site's badge settings, or why it was rejected. | `{"type":"badge","port":"1-1.1.1","role":"badge_in","product":"RFIDeas pcProx","raw":"I105:0010442","result":{"ok":true,"badge_id":"10442","facility":"105","card":"10442","steps":["removed prefix 'I'","split at ':': facility 105, card 0010442","removed leading zeros"],"error":null},"ts":"2026-11-14T08:17:11"}` |
+| `badge_scan` | planned | A badge was checked against the authorized-users list: granted, or denied with the reason. | `{"type":"badge_scan","badge":"10442","user":"M. Alvarez","result":"granted","door":"crib","ts":"2026-11-14T08:17:11"}` |
+| `tag_exit` | planned | A tagged tool left a zone (taken out of the crib or a drawer). | `{"type":"tag_exit","epc":"3034257BF7194E4000001A85","tool":"Torque wrench #4471","zone":"drawer1","user":"M. Alvarez","ts":"2026-11-14T08:18:03"}` |
+| `tag_enter` | planned | A tagged tool came back into a zone. | `{"type":"tag_enter","epc":"3034257BF7194E4000001A85","tool":"Torque wrench #4471","zone":"drawer1","user":"M. Alvarez","ts":"2026-11-14T16:40:51"}` |
+| `session_closed` | planned | A badged-in session ended (badge out or timeout), with what was removed and returned. | `{"type":"session_closed","user":"M. Alvarez","badge":"10442","removed":2,"returned":1,"out":["Torque wrench #4471","Crimper #3302"],"in":["Drill DCD791 #1180"],"ts":"2026-11-14T08:19:30"}` |
+| `gpi_change` | planned | A sensor or button input changed (door contact, motion sensor, push button). | `{"type":"gpi_change","input":"door_1","state":"open","ts":"2026-11-14T08:17:14"}` |
+| `rule_fired` | planned | A configured rule's conditions were met and its actions ran. | `{"type":"rule_fired","rule":"Door held open","detail":"door_1 open > 30 s: buzzer on","ts":"2026-11-14T08:17:45"}` |
+| `storage_changed` | planned | The USB data drive was inserted, removed or became unwritable. | `{"type":"storage_changed","action":"removed","port":"1-1.2","ts":"2026-11-14T09:02:10"}` |

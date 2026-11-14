@@ -683,8 +683,10 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if p == "/api/mqtt":
             if self.require("integrations.view"):
+                with open(os.path.join(ROOT, "app", "defs", "events.json"), encoding="utf-8") as f:
+                    events = json.load(f)["events"]
                 self.send_json({"revision": MQTT_CFG["revision"], "settings": mqtt_link.public(MQTT_CFG["settings"]),
-                                "status": MQTT.status()})
+                                "status": MQTT.status(), "event_types": events})
             return
         if p == "/api/site-settings":
             if self.require("system.view"):

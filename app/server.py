@@ -53,6 +53,12 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store",
 }
+def load_event_types():
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "defs", "events.json"), encoding="utf-8") as f:
+        return json.load(f)["events"]
+
+
+EVENT_TYPES = load_event_types()
 READER_API_DEFAULTS = {"username": "root", "password": ""}
 FACTORY_PASSWORD = "impinj"          # R700 factory default; tried only while no password is saved
 STORAGE_DEFAULTS = {"retention_days_events": 90, "retention_days_logs": 30, "alert_free_pct": 10}
@@ -675,7 +681,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/mqtt":
             if self.require("integrations.view"):
                 rev, cfg = APP.mqtt_settings()
-                self.send_json({"revision": rev, "settings": mqtt_link.public(cfg), "status": APP.mqtt.status()})
+                self.send_json({"revision": rev, "settings": mqtt_link.public(cfg), "status": APP.mqtt.status(),
+                                "event_types": EVENT_TYPES})
             return
         if p == "/api/time":
             if self.require("system.view"):

@@ -17,13 +17,15 @@ export function render(root, ctx) {
   const formCard = h("section", { class: "card" });
   const topicsCard = h("section", { class: "card full" });
   const trafficCard = h("section", { class: "card full" });
+  const eventsCard = h("section", { class: "card full" });
+  let eventsDrawn = false;
   const bar = saveBar({ onSave: save, onDiscard: () => { state.form = formFrom(state.data.settings); drawForm(); changed(); } });
 
   root.append(
     h("h1", {}, "MQTT"),
     h("p", { class: "subtitle" }, "Connects this reader to the site's MQTT broker: it publishes its status and events, and takes commands."),
     msg.el,
-    h("div", { class: "grid grid-2" }, statusCard, formCard, topicsCard, trafficCard),
+    h("div", { class: "grid grid-2" }, statusCard, formCard, topicsCard, eventsCard, trafficCard),
     bar.el);
 
   async function load(rebuildForm) {
@@ -32,6 +34,7 @@ export function render(root, ctx) {
       state.data = d;
       if (rebuildForm || !state.form) { state.form = formFrom(d.settings); drawForm(); changed(); }
       drawStatus(); drawTopics(); drawTraffic();
+      if (!eventsDrawn) { drawEvents(); eventsDrawn = true; }   // static; don't collapse open samples every 3 s
     } catch (err) { fill(statusCard, h("div", { class: "notice bad" }, "Can't load MQTT settings: ", errText(err))); }
   }
 
@@ -141,6 +144,24 @@ export function render(root, ctx) {
         "Mosquitto access control that limits each reader to its own topics (user name = reader serial): ",
         h("code", {}, `pattern readwrite ${state.data.settings.prefix}/+/%u/#`), " and ",
         h("code", {}, `pattern read ${state.data.settings.prefix}/+/all/#`), "."));
+  }
+
+  // ---------- event types
+  function drawEvents() {
+    const list = state.data.event_types || [];
+    const t = state.data.status.topics;
+    const topicFor = (type) => (t ? t.events.replace("<type>", type) : `…/evt/${type}`);
+    const built = list.filter((e) => e.built).length;
+    fill(eventsCard, h("h2", {}, "Event types"),
+      h("p", { class: "hint" }, `Each event is published on its own topic under evt/. This build produces ${built} of the ${list.length} types; `,
+        "the others arrive with the RFID engine, I/O and access control. A type appears in MQTT Explorer's tree the first time it happens."),
+      h("table", { class: "table simple events-table" },
+        h("thead", {}, h("tr", {}, ["Type", "", "Meaning", "Sample payload"].map((x) => h("th", {}, x)))),
+        h("tbody", {}, list.map((e) => h("tr", { class: e.built ? null : "row-off" },
+          h("td", {}, h("div", { class: "mono" }, e.type), h("div", { class: "sub" }, e.label)),
+          h("td", {}, e.built ? h("span", { class: "pill ok" }, "In this build") : h("span", { class: "pill neutral" }, "Planned")),
+          h("td", {}, e.meaning, h("div", { class: "sub mono" }, topicFor(e.type))),
+          h("td", {}, h("details", {}, h("summary", {}, "Show"), h("pre", { class: "mono sample" }, JSON.stringify(e.sample, null, 2)))))))));
   }
 
   // ---------- traffic

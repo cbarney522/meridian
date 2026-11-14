@@ -1,0 +1,154 @@
+{
+  "_comment": "Event types published on <prefix>/<site>/<reader>/evt/<type>. 'built' = produced by this build. Every payload also carries \"type\" and \"ts\" (reader local time, ISO 8601).",
+  "events": [
+    {
+      "type": "usb_attached",
+      "built": true,
+      "label": "USB device plugged in",
+      "meaning": "A USB device appeared on a reader port or hub port.",
+      "sample": {
+        "type": "usb_attached",
+        "port": "1-1.2",
+        "product": "USB Flash Disk",
+        "ts": "2026-11-14T08:15:02"
+      }
+    },
+    {
+      "type": "usb_detached",
+      "built": true,
+      "label": "USB device unplugged",
+      "meaning": "A USB device was removed.",
+      "sample": {
+        "type": "usb_detached",
+        "port": "1-1.2",
+        "product": "USB Flash Disk",
+        "ts": "2026-11-14T08:16:40"
+      }
+    },
+    {
+      "type": "badge",
+      "built": true,
+      "label": "Badge or scanner read",
+      "meaning": "A keyboard-type device (badge reader, barcode scanner) sent a scan. 'raw' is exactly what it typed; 'result' is the badge ID after this site's badge settings, or why it was rejected.",
+      "sample": {
+        "type": "badge",
+        "port": "1-1.1.1",
+        "role": "badge_in",
+        "product": "RFIDeas pcProx",
+        "raw": "I105:0010442",
+        "result": {
+          "ok": true,
+          "badge_id": "10442",
+          "facility": "105",
+          "card": "10442",
+          "steps": [
+            "removed prefix 'I'",
+            "split at ':': facility 105, card 0010442",
+            "removed leading zeros"
+          ],
+          "error": null
+        },
+        "ts": "2026-11-14T08:17:11"
+      }
+    },
+    {
+      "type": "badge_scan",
+      "built": false,
+      "label": "Access decision",
+      "meaning": "A badge was checked against the authorized-users list: granted, or denied with the reason.",
+      "sample": {
+        "type": "badge_scan",
+        "badge": "10442",
+        "user": "M. Alvarez",
+        "result": "granted",
+        "door": "crib",
+        "ts": "2026-11-14T08:17:11"
+      }
+    },
+    {
+      "type": "tag_exit",
+      "built": false,
+      "label": "Tool removed",
+      "meaning": "A tagged tool left a zone (taken out of the crib or a drawer).",
+      "sample": {
+        "type": "tag_exit",
+        "epc": "3034257BF7194E4000001A85",
+        "tool": "Torque wrench #4471",
+        "zone": "drawer1",
+        "user": "M. Alvarez",
+        "ts": "2026-11-14T08:18:03"
+      }
+    },
+    {
+      "type": "tag_enter",
+      "built": false,
+      "label": "Tool returned",
+      "meaning": "A tagged tool came back into a zone.",
+      "sample": {
+        "type": "tag_enter",
+        "epc": "3034257BF7194E4000001A85",
+        "tool": "Torque wrench #4471",
+        "zone": "drawer1",
+        "user": "M. Alvarez",
+        "ts": "2026-11-14T16:40:51"
+      }
+    },
+    {
+      "type": "session_closed",
+      "built": false,
+      "label": "Session summary",
+      "meaning": "A badged-in session ended (badge out or timeout), with what was removed and returned.",
+      "sample": {
+        "type": "session_closed",
+        "user": "M. Alvarez",
+        "badge": "10442",
+        "removed": 2,
+        "returned": 1,
+        "out": [
+          "Torque wrench #4471",
+          "Crimper #3302"
+        ],
+        "in": [
+          "Drill DCD791 #1180"
+        ],
+        "ts": "2026-11-14T08:19:30"
+      }
+    },
+    {
+      "type": "gpi_change",
+      "built": false,
+      "label": "Input changed",
+      "meaning": "A sensor or button input changed (door contact, motion sensor, push button).",
+      "sample": {
+        "type": "gpi_change",
+        "input": "door_1",
+        "state": "open",
+        "ts": "2026-11-14T08:17:14"
+      }
+    },
+    {
+      "type": "rule_fired",
+      "built": false,
+      "label": "Rule ran",
+      "meaning": "A configured rule's conditions were met and its actions ran.",
+      "sample": {
+        "type": "rule_fired",
+        "rule": "Door held open",
+        "detail": "door_1 open > 30 s: buzzer on",
+        "ts": "2026-11-14T08:17:45"
+      }
+    },
+    {
+      "type": "storage_changed",
+      "built": false,
+      "label": "Data drive changed",
+      "meaning": "The USB data drive was inserted, removed or became unwritable.",
+      "sample": {
+        "type": "storage_changed",
+        "action": "removed",
+        "port": "1-1.2",
+        "ts": "2026-11-14T09:02:10"
+      }
+    }
+  ]
+}
