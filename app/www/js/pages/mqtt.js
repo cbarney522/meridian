@@ -119,13 +119,15 @@ export function render(root, ctx) {
   function drawTopics() {
     const t = state.data.status.topics;
     if (!t) return fill(topicsCard, h("h2", {}, "Topics"), h("p", { class: "muted" }, "Shown once the broker is set up."));
-    const copy = (text) => h("button", { type: "button", class: "btn btn-small", title: "Copy",
+    const copy = (text) => h("button", { type: "button", class: "btn btn-small", title: `Copy ${text}`,
       onclick: () => navigator.clipboard?.writeText(text).then(() => msg.show("Copied."), () => msg.show("Copy isn't allowed here; select the text instead.", true)) }, "Copy");
-    const row = (label, topic, note) => h("tr", {}, h("td", {}, label), h("td", { class: "mono" }, topic), h("td", {}, note), h("td", {}, copy(topic)));
+    // a Copy button followed by the exact text it copies
+    const copyCell = (text) => h("td", {}, h("div", { class: "copy-cell" }, copy(text), h("span", { class: "mono" }, text)));
+    const row = (label, topic, note) => h("tr", {}, h("td", {}, label), copyCell(topic), h("td", {}, note));
     const cmd = (name) => t.commands.replace("<name>", name);
     fill(topicsCard, h("h2", {}, "Topics"),
       h("table", { class: "table simple" },
-        h("thead", {}, h("tr", {}, ["", "Topic", "", ""].map((x) => h("th", {}, x)))),
+        h("thead", {}, h("tr", {}, ["", "Topic", ""].map((x) => h("th", {}, x)))),
         h("tbody", {},
           row("Watch everything", t.subscribe_all, "Subscribe to this in MQTT Explorer."),
           row("Status", t.status, "Retained. “online” with details; “offline” if the reader drops off."),
@@ -136,10 +138,9 @@ export function render(root, ctx) {
           row("Client ID", t.client_id, "Give the reader a broker login with this name or its serial."))),
       h("h3", { style: { marginTop: "16px" } }, "Try a command"),
       h("table", { class: "table simple" },
-        h("thead", {}, h("tr", {}, ["Publish to", "Payload", "", ""].map((x) => h("th", {}, x)))),
+        h("thead", {}, h("tr", {}, ["Publish to", "Payload", ""].map((x) => h("th", {}, x)))),
         h("tbody", {}, EXAMPLES.map(([name, body, note]) => h("tr", {},
-          h("td", { class: "mono" }, cmd(name)), h("td", { class: "mono" }, JSON.stringify(body)), h("td", {}, note),
-          h("td", {}, copy(JSON.stringify(body))))))),
+          copyCell(cmd(name)), copyCell(JSON.stringify(body)), h("td", {}, note))))),
       h("p", { class: "hint", style: { marginTop: "10px" } },
         "Mosquitto access control that limits each reader to its own topics (user name = reader serial): ",
         h("code", {}, `pattern readwrite ${state.data.settings.prefix}/+/%u/#`), " and ",
