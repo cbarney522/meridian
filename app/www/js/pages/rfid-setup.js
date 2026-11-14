@@ -104,7 +104,11 @@ export function render(root, ctx) {
     const noZone = state.form.ignore_unzoned && sm.antennas.length && !sm.antennas.some((a) => zoned.includes(String(a)));
     return h("div", { class: "preset-line" }, label, ants, power, sm.search_mode ? ` · ${sm.search_mode}` : "", " · ",
       ri > 0 ? h("span", { class: "warn-text" }, `reports each tag once every ${ri} s`) : "reports every read",
-      ri > 0 ? h("div", { class: "muted" }, `Meridian adapts while it runs: a tag counts as arrived after 1 report, and gone after ${2 * ri + 2} s without one.`) : null,
+      ri > 0 ? h("div", { class: "muted" }, (() => {
+        const n = Number(state.form.enter_reads) || 1;
+        return `With this preset, confirming ${n} read${n === 1 ? "" : "s"} takes about ${Math.max(0, (n - 1) * ri)} s. `
+          + `Meridian keeps “gone after” at least ${2 * ri + 2} s while it runs, so the reads can add up.`;
+      })()) : null,
       noZone ? h("div", { class: "bad-text" }, "None of these antennas has a zone name, and “Ignore antennas without a zone name” is ticked, so every read is ignored.") : null,
       h("details", {}, h("summary", {}, "Settings as the reader reports them"), h("pre", { class: "mono sample" }, JSON.stringify(i.raw, null, 2))));
   }

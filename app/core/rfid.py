@@ -8,8 +8,8 @@ the tag stream, and turns raw reads into tag_enter / tag_exit events per zone.
 
 Meridian starts a preset that's already saved on the reader (create and tune presets in the
 Impinj web UI: antennas, power, session, search mode). It reads each preset's configuration and
-adapts: a preset that reports each tag once per N seconds gets "arrived after 1 report" and
-"gone after 2N+2 s". A running preset is stopped before another is started.
+adapts: a preset that reports each tag once per N seconds gets "gone after" of at least 2N+2 s
+(Reads to confirm arrival is never changed). A running preset is stopped before another is started.
 Standard library only.
 """
 import base64
@@ -271,8 +271,10 @@ class TagTracker:
         return t
 
     def enter_reads(self):
-        # a preset that reports each tag once per interval: one report is all we'll get
-        return 1 if self.report_interval_s > 0 else self.s["enter_reads"]
+        # Always the configured value. With a preset that reports each tag once per interval,
+        # confirming simply takes (reads - 1) x interval; the stretched gone-after keeps the
+        # count alive between reports.
+        return self.s["enter_reads"]
 
     def zone_for(self, port):
         z = self.s["zones"].get(str(port))

@@ -126,10 +126,20 @@ class AdaptTests(unittest.TestCase):
     def test_interval_preset(self):
         t = rfid.TagTracker(dict(rfid.DEFAULTS, exit_timeout_s=5, enter_reads=2))
         t.report_interval_s = 10                    # preset reports each tag once per 10 s
-        self.assertEqual((t.enter_reads(), t.exit_timeout()), (1, 22))
-        self.assertEqual(t.read(EPC, 1, -5000, now=0)[0][0], "tag_enter")   # one report is enough
-        self.assertEqual(t.sweep(now=15), [])                                  # not gone between reports
-        self.assertEqual(t.sweep(now=23)[0][0], "tag_exit")
+        self.assertEqual((t.enter_reads(), t.exit_timeout()), (2, 22))         # the setting is kept
+        self.assertEqual(t.read(EPC, 1, -5000, now=0), [])                     # one report: not yet
+        self.assertEqual(t.sweep(now=9), [])                                   # count survives between reports
+        self.assertEqual(t.read(EPC, 1, -5000, now=10)[0][0], "tag_enter")     # second report confirms
+        self.assertEqual(t.sweep(now=25), [])                                  # not gone between reports
+        self.assertEqual(t.sweep(now=33)[0][0], "tag_exit")
+
+    def test_three_reads_needed(self):
+        t = rfid.TagTracker(dict(rfid.DEFAULTS, exit_timeout_s=5, enter_reads=3))
+        self.assertEqual(t.read(EPC, 1, -5000, now=0), [])
+        self.assertEqual(t.read(EPC, 1, -5000, now=0.1), [])
+        self.assertFalse(t.snapshot(now=0.2)["tags"][0]["actionable"])
+        self.assertEqual(t.read(EPC, 1, -5000, now=0.2)[0][0], "tag_enter")
+        self.assertTrue(t.snapshot(now=0.3)["tags"][0]["actionable"])
 
     def test_summary(self):
         raw = {"eventConfig": {"tagInventory": {"tagReporting": {"reportingIntervalSeconds": 3}}},
@@ -264,7 +274,7 @@ class EngineTests(unittest.TestCase):
         self.eng.start_inventory("default")
         self.assertEqual([(c[1], c[2]) for c in self.state["calls"]], [("stop", None), ("start", "default")])
         eff = self.eng.status()["effective"]
-        self.assertEqual((eff["report_interval_s"], eff["enter_reads"], eff["exit_timeout_s"]), (4, 1, 10))
+        self.assertEqual((eff["report_interval_s"], eff["enter_reads"], eff["exit_timeout_s"]), (4, 2, 10))
         self.eng.stop_inventory()
         self.assertEqual(self.eng.status()["effective"]["report_interval_s"], 0)
 
