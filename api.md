@@ -285,3 +285,25 @@ Meridian calls `https://localhost/api/v1/system`, `/system/image`, `/system/regi
 | PUT | `/api/site-settings` | system.edit | `{revision, settings}` → 400 `invalid` with `details`, 409 `conflict`. |
 
 The reader's clock stays on UTC and is set by chronyd; Meridian can't change the system time zone or NTP servers (no root). It applies the site time zone itself. `site_name` replaces the hostname as the reader name in the top bar, `/api/status` and `/api/session`; `site_id` is `reader.site`. The CAP bundles a time-zone database (`zoneinfo/`, from the build machine's tzdata) used when the reader has none (`PYTHONTZPATH`).
+
+## MQTT (Integrations › MQTT)
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/mqtt` | integrations.view | `{revision, settings, status}`. settings: `enabled`, `host`, `port`, `tls`, `verify_cert`, `ca_pem`, `username`, `password_set`, `prefix`, `heartbeat_s`, `qos` (password never returned). status: `enabled`, `connected`, `since`, `broker`, `tls`, `error`, `queued`, `dropped`, `sent`, `received`, `topics`, `traffic` (last 50, newest first). |
+| PUT | `/api/mqtt` | integrations.edit | `{revision, settings}`; blank `password` keeps the saved one, `clear_password: true` removes it. Reconnects immediately. |
+| POST | `/api/mqtt/test` | integrations.edit | `{settings}` → `{ok, error, ms}`. Connects once with the given values (saved password used if blank); saves nothing. |
+
+`/api/status` → `mqtt`: `{available, enabled, connected, outbox_depth, broker, error}`.
+
+### Topics
+`<prefix>/<site>/<reader>/…` where `<reader>` is the serial number (hostname until known) and `<site>` the Site ID or `unassigned`.
+
+| Topic | Direction | Payload |
+|---|---|---|
+| `…/status` | reader → broker, retained | `{"state":"online", reader, site, name, location, version, firmware, ip, uptime_s, ts}`; Last Will `{"state":"offline"}`; clean stop adds `"reason":"stopped"`. Refreshed every `heartbeat_s`. |
+| `…/evt/<type>` | reader → broker | the event as on the live feed (`usb_attached`, `usb_detached`, `badge`, `storage_changed`, …) |
+| `…/cmd/<name>`, `<prefix>/<site>/all/cmd/<name>` | broker → reader | `{"id": "...", "args": {...}, "expires": <epoch s, optional>}` |
+| `…/ack` | reader → broker | `{"id", "cmd", "ok", "result" \| "error", "ts"}` |
+
+Commands: `ping`, `identify` (`args.seconds`, 1–120), `status`, `info`. Unknown, malformed or expired commands get `ok:false`. While disconnected, outgoing messages wait in a 1000-message in-memory queue (oldest dropped). The client is paho-mqtt 2.2.0, vendored in `app/vendor/paho` (EPL-2.0 / EDL-1.0).

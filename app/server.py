@@ -35,7 +35,7 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
-from core import accounts_api, netinfo, timeloc  # noqa: E402
+from core import accounts_api, netinfo, timeloc, mqtt_link  # noqa: E402
 from core.readerapi import ReaderApi  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
 
@@ -112,6 +112,9 @@ class App:
     def start_watchers(self):
         UsbWatcher(self.sysfs, self.bus.emit).start()
         threading.Thread(target=self._reader_info_loop, daemon=True, name="reader-info").start()
+        self.mqtt = mqtt_link.MqttLink(self.mqtt_identity, self.mqtt_command, self.bus.emit)
+        threading.Thread(target=self._mqtt_start, daemon=True, name="mqtt-start").start()
+        threading.Thread(target=self._mqtt_bridge, daemon=True, name="mqtt-bridge").start()
         if not self.args.no_badges:
             self.badges = BadgeListener(self.sysfs, self.args.dev_root, self.usb_assignments,
                                         self.badge_settings, self.bus.emit)
@@ -178,6 +181,64 @@ class App:
             self.reader_wake.set()          # re-read now with the new login
         return 200, {"ok": True, "revision": rev}
 
+    # -- MQTT
+    MQTT_SKIP = {"mqtt_state", "identify"}           # bus events not forwarded to the broker
+    MQTT_RENAME = {"badge_raw": "badge"}
+
+    def mqtt_identity(self):
+        it = (getattr(self, "reader_cache", None) or {}).get("items", {})
+        site = self.site()
+        return {"reader": it.get("serial") or socket.gethostname(), "site": site.get("site_id") or None,
+                "name": site.get("site_name") or socket.gethostname(), "location": site.get("location") or None,
+                "version": app_version(), "firmware": it.get("firmware"), "ip": netinfo.summary()["ipv4"],
+                "uptime_s": int(read_first("/proc/uptime", float) or 0)}
+
+    def mqtt_command(self, name, args):
+        if name == "ping":
+            return {"pong": True, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        if name == "identify":
+            secs = max(1, min(int(args.get("seconds", 10) or 10), 120))
+            self.bus.emit("identify", seconds=secs, source="mqtt")
+            return {"identifying_for_s": secs}
+        if name == "status":
+            s = self.status()
+            return {k: s[k] for k in ("reader", "usb", "mqtt")}
+        if name == "info":
+            return self.reader_info()
+        raise ValueError(f"unknown command '{name}' (try ping, identify, status or info)")
+
+    def mqtt_settings(self):
+        return self.store.get("mqtt", mqtt_link.DEFAULTS)
+
+    def _mqtt_start(self):
+        # give the reader API a moment so the first connection already uses the serial number
+        for _ in range(20):
+            if getattr(self, "reader_cache", None):
+                break
+            time.sleep(0.5)
+        self.mqtt.apply(self.mqtt_settings()[1])
+
+    def _mqtt_bridge(self):
+        last = self.bus.seq
+        while True:
+            for ev in self.bus.since(last, 30):
+                last = max(last, ev["id"])
+                if ev["type"] in self.MQTT_SKIP:
+                    continue
+                data = {k: v for k, v in ev.items() if k not in ("id", "type")}
+                self.mqtt.publish_event(self.MQTT_RENAME.get(ev["type"], ev["type"]), data)
+
+    def mqtt_save(self, revision, body):
+        _, cur = self.mqtt_settings()
+        clean, errors = mqtt_link.validate(body, cur)
+        if errors:
+            return 400, {"error": "invalid", "details": errors}
+        rev = self.store.put("mqtt", revision, clean)
+        if rev is None:
+            return 409, {"error": "conflict"}
+        threading.Thread(target=self.mqtt.apply, args=(clean,), daemon=True).start()
+        return 200, {"ok": True, "revision": rev}
+
     # -- time & location
     def site(self):
         return self.store.get("site", timeloc.SITE_DEFAULTS)[1]
@@ -197,6 +258,14 @@ class App:
                 "tz_database": timeloc.zone("America/New_York") is not None,
                 "tz_path": list(getattr(timeloc.zoneinfo, "TZPATH", ())),
                 "ntp": timeloc.ntp_status(), "reader_ntp_config": ntp_cfg, "sun": sun}
+
+    def _mqtt_brief(self):
+        m = getattr(self, "mqtt", None)
+        if not m:
+            return {"available": False, "connected": False, "outbox_depth": 0}
+        st = m.status()
+        return {"available": True, "enabled": st["enabled"], "connected": st["connected"],
+                "outbox_depth": st["queued"], "broker": st["broker"], "error": st["error"]}
 
     def site_save(self, revision, body):
         clean, errors = timeloc.validate_site(body)
@@ -440,7 +509,7 @@ class App:
                        "uptime_s": int(read_first("/proc/uptime", float) or 0), "ntp_synced": self.ntp_synced(),
                        "temp_c": round(temp / 1000, 1) if temp else None},
             "rfid": {"available": False, "running": False, "read_rate": 0, "tags_in_field": 0, "zones": {}},
-            "mqtt": {"available": False, "connected": False, "outbox_depth": 0},
+            "mqtt": self._mqtt_brief(),
             "usb": {"drive": drive["present"], "free_mb": (drive["capacity"]["free"] // 1048576) if drive["capacity"] else 0,
                     "badge_in": role_ok("badge_in"), "badge_out": role_ok("badge_out")},
             "session": None,
@@ -603,6 +672,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
             return
+        if p == "/api/mqtt":
+            if self.require("integrations.view"):
+                rev, cfg = APP.mqtt_settings()
+                self.send_json({"revision": rev, "settings": mqtt_link.public(cfg), "status": APP.mqtt.status()})
+            return
         if p == "/api/time":
             if self.require("system.view"):
                 self.send_json(APP.time_status())
@@ -654,6 +728,15 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError):
                 return self.send_json({"error": "bad_request"}, 400)
             status, result = APP.reader_api_save(body.get("revision"), body)
+            return self.send_json(result, status)
+        if p == "/api/mqtt":
+            if not self.require("integrations.edit"):
+                return
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, 400)
+            status, result = APP.mqtt_save(body.get("revision"), body.get("settings"))
             return self.send_json(result, status)
         if p == "/api/site-settings":
             if not self.require("system.edit"):
@@ -708,6 +791,14 @@ class Handler(BaseHTTPRequestHandler):
             APP.sessions.drop_user(self.account["user"], keep=self.token)   # sign out their other sessions
             log.info("%s changed their password", self.account["user"])
             return self.send_json({"ok": True})
+        if p == "/api/mqtt/test":
+            if not self.require("integrations.edit"):
+                return
+            _, cur = APP.mqtt_settings()
+            clean, errors = mqtt_link.validate(dict(body.get("settings") or {}, enabled=False), cur)
+            if errors:
+                return self.send_json({"ok": False, "error": " ".join(errors)})
+            return self.send_json(mqtt_link.test_connection(clean, f"meridian-test-{socket.gethostname()}"))
         if p == "/api/reader/api-test":
             if not self.require("system.edit"):
                 return

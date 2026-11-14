@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb, badges, storage, accounts_api, timeloc  # noqa: E402
+from core import usb, badges, storage, accounts_api, timeloc, mqtt_link  # noqa: E402
 from core.config import Store  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
 import fake_sysfs  # noqa: E402
@@ -97,9 +97,13 @@ class Sim:
     def emit(self, etype, **data):
         with self.lock:
             self.seq += 1
-            self.events.append({"id": self.seq, "type": etype,
-                                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **data})
+            ev = {"id": self.seq, "type": etype, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **data}
+            self.events.append(ev)
             self.lock.notify_all()
+        link = globals().get("MQTT")
+        if link and etype not in ("mqtt_state", "identify"):
+            link.publish_event({"badge_raw": "badge"}.get(etype, etype),
+                               {k: v for k, v in ev.items() if k not in ("id", "type")})
 
     def run(self):
         while True:
@@ -158,13 +162,47 @@ class Sim:
                        "uptime_s": up, "ntp_synced": True, "temp_c": round(41 + random.random() * 2, 1)},
             "rfid": {"running": True, "read_rate": self.read_rate,
                      "tags_in_field": sum(self.zone_counts.values()), "zones": dict(self.zone_counts)},
-            "mqtt": {"connected": True, "outbox_depth": self.outbox},
+            "mqtt": mock_mqtt_brief(),
             "usb": {"drive": True, "free_mb": 28110, "badge_in": True, "badge_out": True},
             "session": self.session,
         }
 
 
 SIM = Sim()
+
+
+# MQTT: the mock uses the real link, so pointing it at a real broker works too.
+MQTT_CFG = {"revision": 0, "settings": dict(mqtt_link.DEFAULTS)}
+
+
+def mock_identity():
+    st = SITE["settings"]
+    return {"reader": "37025501450", "site": st["site_id"] or None, "name": st["site_name"] or "impinj-17-1b-e6",
+            "location": st["location"] or None, "version": "0.1.0-dev", "firmware": "10.4.0.240",
+            "ip": "192.168.0.188", "uptime_s": int(time.time() - STARTED) + 282441}
+
+
+def mock_command(name, args):
+    if name == "ping":
+        return {"pong": True, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if name == "identify":
+        secs = max(1, min(int(args.get("seconds", 10) or 10), 120))
+        SIM.emit("identify", seconds=secs, source="mqtt")
+        return {"identifying_for_s": secs}
+    if name == "status":
+        return {k: SIM.status()[k] for k in ("reader", "usb", "mqtt")}
+    if name == "info":
+        return mock_reader_info()
+    raise ValueError(f"unknown command '{name}' (try ping, identify, status or info)")
+
+
+MQTT = mqtt_link.MqttLink(mock_identity, mock_command, SIM.emit)
+
+
+def mock_mqtt_brief():
+    st = MQTT.status()
+    return {"available": True, "enabled": st["enabled"], "connected": st["connected"],
+            "outbox_depth": st["queued"], "broker": st["broker"], "error": st["error"]}
 
 
 # ---------------------------------------------------------------- simulated site (50 readers)
@@ -643,6 +681,11 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("system.view"):
                 self.send_json(mock_time())
             return
+        if p == "/api/mqtt":
+            if self.require("integrations.view"):
+                self.send_json({"revision": MQTT_CFG["revision"], "settings": mqtt_link.public(MQTT_CFG["settings"]),
+                                "status": MQTT.status()})
+            return
         if p == "/api/site-settings":
             if self.require("system.view"):
                 self.send_json({"revision": SITE["revision"], "settings": SITE["settings"],
@@ -716,6 +759,14 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("POST")
+        if p == "/api/mqtt/test":
+            if not self.require("integrations.edit"):
+                return
+            body = self.read_json()
+            clean, errors = mqtt_link.validate(dict(body.get("settings") or {}, enabled=False), MQTT_CFG["settings"])
+            if errors:
+                return self.send_json({"ok": False, "error": " ".join(errors)})
+            return self.send_json(mqtt_link.test_connection(clean, "meridian-test-mock"))
         if p == "/api/reader/api-test":
             if not self.require("system.edit"):
                 return
@@ -785,6 +836,19 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith("/api/accounts/"):
             return self.accounts("PUT")
+        if p == "/api/mqtt":
+            if not self.require("integrations.edit"):
+                return
+            body = self.read_json()
+            if body.get("revision") != MQTT_CFG["revision"]:
+                return self.send_json({"error": "conflict"}, HTTPStatus.CONFLICT)
+            clean, errors = mqtt_link.validate(body.get("settings"), MQTT_CFG["settings"])
+            if errors:
+                return self.send_json({"error": "invalid", "details": errors}, HTTPStatus.BAD_REQUEST)
+            MQTT_CFG["settings"] = clean
+            MQTT_CFG["revision"] += 1
+            threading.Thread(target=MQTT.apply, args=(clean,), daemon=True).start()
+            return self.send_json({"ok": True, "revision": MQTT_CFG["revision"]})
         if p == "/api/site-settings":
             if not self.require("system.edit"):
                 return

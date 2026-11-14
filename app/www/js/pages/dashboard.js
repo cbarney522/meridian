@@ -5,6 +5,7 @@ const EVENT_LABEL = {
   badge_scan: "Badge", tag_enter: "Returned", tag_exit: "Removed",
   session_closed: "Session closed", gpi_change: "Input", rule_fired: "Rule fired",
   usb_attached: "USB attached", usb_detached: "USB removed", storage_changed: "Storage",
+  mqtt_state: "MQTT", identify: "Identify",
 };
 const MAX_EVENTS = 40;
 
@@ -84,8 +85,10 @@ function drawCards(root, s, canAbout) {
         : h("p", { class: "muted" }, "No zones configured.")),
     h("section", { class: "card" }, h("h2", {}, "Delivery & devices"),
       h("dl", { class: "kv" },
-        h("dt", {}, "MQTT"), h("dd", {}, mqttOn ? pill(s.mqtt.connected, "Connected", "Disconnected") : h("span", { class: "pill neutral" }, "Not in this build")),
-        h("dt", {}, "Outbox"), h("dd", {}, !mqttOn ? v(null) : s.mqtt.outbox_depth === 0 ? pill(true, "Empty") : h("span", { class: "pill warn" }, `${s.mqtt.outbox_depth} queued`)),
+        h("dt", {}, "MQTT"), h("dd", {}, !mqttOn ? h("span", { class: "pill neutral" }, "Not in this build")
+          : s.mqtt.enabled === false ? h("a", { href: "#/integrations/mqtt", class: "pill neutral" }, "Not set up")
+          : h("span", { title: s.mqtt.error || s.mqtt.broker || "" }, pill(s.mqtt.connected, "Connected", "Disconnected"))),
+        h("dt", {}, "Outbox"), h("dd", {}, !mqttOn || s.mqtt.enabled === false ? v(null) : s.mqtt.outbox_depth === 0 ? pill(true, "Empty") : h("span", { class: "pill warn" }, `${s.mqtt.outbox_depth} queued`)),
         h("dt", {}, "USB drive"), h("dd", {}, pill(s.usb.drive, s.usb.free_mb ? `${(s.usb.free_mb / 1024).toFixed(1)} GB free` : "Present", "Missing")),
         h("dt", {}, "Badge in"), h("dd", {}, pill(s.usb.badge_in, "Present", "Missing")),
         h("dt", {}, "Badge out"), h("dd", {}, pill(s.usb.badge_out, "Present", "Missing")))),
@@ -113,6 +116,8 @@ function eventRow(ev) {
     case "gpi_change": text = `${ev.input} ${ev.state}`; break;
     case "rule_fired": text = `${ev.rule} — ${ev.detail}`; break;
     case "usb_attached": case "usb_detached": text = `${ev.product || "Device"} on port ${ev.port}`; break;
+    case "mqtt_state": cls = ev.connected ? "mqtt_state" : "denied"; text = ev.connected ? "Connected to the broker" : "Lost the broker connection"; break;
+    case "identify": text = `Identify requested${ev.source ? " over " + ev.source.toUpperCase() : ""} (${ev.seconds} s)`; break;
     case "storage_changed": text = `Data drive ${ev.action === "eject" ? "ejected" : ev.action === "mount" ? "mounted" : "formatted"}`; break;
     default: text = JSON.stringify(ev);
   }
