@@ -100,10 +100,9 @@ def write_test(mount_point, subdir="meridian"):
 
 
 def warnings_for(mount, cap, alert_free_pct):
+    """Problems worth a warning. The filesystem type isn't one of them: on FW 10.4 a CAP can't
+    reformat drives, so FAT32 (how sticks ship) is the normal case and Meridian keeps files < 4 GB."""
     out = []
-    if mount and mount["fs_type"] != RECOMMENDED_FS:
-        out.append(f"Filesystem is {mount['fs_type']}; {RECOMMENDED_FS} is recommended "
-                   "(survives power loss better, no 4 GB file limit).")
     if mount and mount["read_only"]:
         out.append("Drive is mounted read-only — usually a sign of filesystem errors or a worn-out drive.")
     if cap and cap["size"] and cap["free"] * 100 / cap["size"] < alert_free_pct:

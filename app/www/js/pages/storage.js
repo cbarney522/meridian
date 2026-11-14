@@ -68,7 +68,7 @@ export function render(root, ctx) {
             h("dt", {}, "Linux device"), h("dd", { class: "mono" }, drv.mount ? drv.mount.device : drv.node || "—"),
             h("dt", {}, "Mounted at"), h("dd", { class: "mono" }, drv.mount ? drv.mount.mount_point : "—"),
             h("dt", {}, "Filesystem"), h("dd", {}, drv.mount
-              ? h("span", { class: "pill " + (drv.mount.fs_type === "ext4" ? "ok" : "warn") }, drv.mount.fs_type) : "—"),
+              ? h("span", { class: "pill neutral" }, drv.mount.fs_type === "vfat" ? "FAT32 (vfat)" : drv.mount.fs_type) : "—"),
             h("dt", {}, "Write test"), h("dd", {}, drv.writable === undefined || drv.writable === null ? "—"
               : h("span", { class: "pill " + (drv.writable ? "ok" : "bad"), title: drv.write_error || "" },
                   drv.writable ? "Meridian can write" : "Not writable")))
@@ -93,15 +93,13 @@ export function render(root, ctx) {
               h("span", {}, u.label, h("div", { class: "sub mono" }, u.path)),
               h("div", { class: "bar-track" }, h("div", { class: "bar-fill", style: { width: `${(u.bytes / maxItem) * 100}%` } })),
               h("span", { class: "n" }, fmtBytes(u.bytes)))))) : null,
-        canEdit && drv.present ? h("section", { class: "card" }, h("h2", {}, "Actions"),
-          h("div", { class: "actions" },
-            drv.mounted
-              ? h("button", { type: "button", class: "btn", onclick: () => act("eject") }, "Eject safely")
-              : h("button", { type: "button", class: "btn", onclick: () => act("mount") }, "Mount"),
-            h("button", { type: "button", class: "btn btn-danger", onclick: () => dialog.open() }, "Format as ext4…")),
-          h("p", { class: "hint" }, drv.mount && drv.mount.sync
-            ? "This reader mounts drives with 'sync' (every write goes straight to the drive), so unplugging is fairly safe; ejecting first is still best."
-            : "Eject before unplugging so no write is cut off mid-way.")) : null,
+        drv.present ? h("section", { class: "card" }, h("h2", {}, "Removing the drive"),
+          h("p", {}, drv.mount && drv.mount.sync
+            ? "The reader mounts drives with 'sync' (every write goes straight to the drive), so unplugging is fairly safe. Best moment: when no badges are being scanned and no events are being written."
+            : "Unplug only when the reader is idle."),
+          (d.can_eject || d.can_format) && canEdit ? h("div", { class: "actions" },
+            d.can_eject ? h("button", { type: "button", class: "btn", onclick: () => act(drv.mounted ? "eject" : "mount") }, drv.mounted ? "Eject safely" : "Mount") : null,
+            d.can_format ? h("button", { type: "button", class: "btn btn-danger", onclick: () => dialog.open() }, "Format as ext4…") : null) : null) : null,
       ),
     );
     if (dev) fill(devBox, h("strong", {}, "Mock server: "),

@@ -231,12 +231,15 @@ class App:
                       "mounted": bool(mount), "mount": mount, "capacity": cap,
                       "writable": (write_error is None) if mount else None, "write_error": write_error},
             "usage": usage,
+            # FW 10.4 runs CAPs as the non-root 'cap' user: the reader mounts drives itself and won't
+            # let a CAP unmount or format them (verified on hardware, Nov 2026).
+            "can_eject": False, "can_format": False,
             "internal": {"path": self.args.data_dir, **internal, "buffering": not mount},
             "settings": settings,
             "warnings": storage.warnings_for(mount, cap, settings["alert_free_pct"])
                         + ([f"Meridian can't write to the drive: {write_error}"] if write_error else [])
-                        + ([] if mount or not dev else ["The drive is plugged in but not mounted. "
-                                                        "Automatic mounting arrives with the engine."]),
+                        + ([] if mount or not dev else ["The drive is plugged in but the reader hasn't mounted it. "
+                                                        "Try unplugging it and plugging it back in."]),
         }
 
     def storage_save(self, revision, new):
@@ -255,36 +258,6 @@ class App:
         if rev is None:
             return 409, {"error": "conflict"}
         return 200, {"ok": True, "revision": rev}
-
-    def storage_eject(self):
-        """Flush and unmount every mount of the data drive. On FW 10.4 the CAP runs as the
-        non-root 'cap' user, so the reader may refuse; the error is passed back verbatim."""
-        assign = self.usb_assignments()
-        port = next((p for p, a in assign.items() if a["role"] == "storage"), None)
-        dev = {d["port"]: d for d in usb.scan(self.sysfs)}.get(port) if port else None
-        if not dev:
-            return 409, {"error": "no_drive", "details": ["No data drive is plugged in."]}
-        mounts = storage.find_mounts(dev["nodes"], self.args.proc_mounts)
-        if not mounts:
-            return 409, {"error": "not_mounted", "details": ["The drive isn't mounted."]}
-        subprocess.run(["sync"], timeout=30, check=False)
-        errors = []
-        for m in sorted(mounts, key=lambda m: -len(m["mount_point"])):
-            try:
-                r = subprocess.run(["umount", m["mount_point"]], capture_output=True, text=True, timeout=30)
-            except (OSError, subprocess.SubprocessError) as e:
-                errors.append(f"{m['mount_point']}: {e}")
-                continue
-            if r.returncode != 0:
-                errors.append((r.stderr or r.stdout or f"umount exit {r.returncode}").strip())
-        self.write_checks.clear()
-        if errors:
-            log.warning("eject failed: %s", "; ".join(errors))
-            return 409, {"error": "eject_failed", "details": ["The reader didn't allow unmounting: " + "; ".join(errors)
-                         + (" The drive is mounted with 'sync', so unplugging it is fairly safe." if any(m["sync"] for m in mounts) else "")]}
-        log.info("data drive on port %s ejected", port)
-        self.bus.emit("storage_changed", action="eject", port=port)
-        return 200, {"ok": True}
 
     def ntp_synced(self):
         """True/False from chronyc if available (cached 60 s); None if unknown."""
@@ -522,19 +495,11 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(raw, str) or len(raw) > 128:
                 return self.send_json({"error": "bad_request"}, 400)
             return self.send_json(badges.normalize(raw, merged))
-        if p == "/api/storage/eject":
-            if self.require("hardware.edit"):
-                status, result = APP.storage_eject()
-                self.send_json(result, status)
-            return
-        if p == "/api/storage/mount":
+        if p in ("/api/storage/eject", "/api/storage/mount", "/api/storage/format"):
             if self.require("hardware.edit"):
                 self.send_json({"error": "not_supported", "details": [
-                    "The reader mounts USB drives itself when they're plugged in. Unplug the drive and plug it back in."]}, 409)
-            return
-        if p == "/api/storage/format":
-            if self.require("hardware.edit"):
-                self.not_built("Formatting the drive")
+                    "The reader mounts USB drives itself and doesn't let apps unmount or format them. "
+                    "Drives are mounted with 'sync', so unplugging one is fairly safe."]}, 409)
             return
         return self.send_json({"error": "not_found"}, 404)
 

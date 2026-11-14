@@ -401,8 +401,8 @@ class StorageMock:
             mount = None
             cap = None
             if present and self.mounted:
-                mount = {"device": (node + "1") if node else None, "mount_point": "/cust/rw_dir/data",
-                         "fs_type": self.fs_type, "read_only": False}
+                mount = {"device": (node + "1") if node else None, "mount_point": "/run/media/disks/disk0",
+                         "fs_type": self.fs_type, "read_only": False, "sync": True}
                 used = sum(self.usage.values()) + int(self.size * 0.012)      # filesystem overhead
                 cap = {"size": self.size, "used": used, "free": self.size - used}
             items = [
@@ -421,6 +421,7 @@ class StorageMock:
                     "mounted": bool(mount), "mount": mount, "capacity": cap,
                 },
                 "usage": items,
+                "can_eject": False, "can_format": False,    # matches FW 10.4 (CAP runs as non-root 'cap')
                 "internal": {"path": "/cust/rw_dir", "size": 128 * 1024 ** 2, "used": 23 * 1024 ** 2,
                              "free": 105 * 1024 ** 2, "buffering": present is False or not self.mounted},
                 "settings": dict(self.settings),
@@ -452,6 +453,7 @@ class StorageMock:
         port, dev = self._drive()
         if dev is None:
             return 409, {"error": "no_drive"}
+        return 409, {"error": "not_supported", "details": ["The reader mounts USB drives itself and doesn't let apps unmount or format them."]}
         with self.lock:
             if what == "eject":
                 self.mounted = False

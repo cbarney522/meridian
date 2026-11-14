@@ -170,9 +170,11 @@ Mount lookup, capacity and warnings come from `core/storage.py`. The drive is th
 `{"revision": 1, "settings": {...}}`; each value a whole number (retention 1–3650 days, alert 1–50 %).
 
 ### `POST /api/storage/eject` · `/api/storage/mount` · `/api/storage/format` — need `hardware.edit`
-Format requires `{"confirm": "FORMAT"}` and erases the drive (including unsent events), reformats
-ext4 and mounts it. `409 {"error": "no_drive"}` if no drive is present. On the reader these are
-done by the engine so the outbox writer is paused first.
+Not supported on FW 10.4: the CAP runs as the non-root `cap` user, the reader auto-mounts drives
+(twice: `/run/media/disks/<id>` and `/run/mount/external/<id>`, `vfat`, `sync`, group `disk`
+writable) and `umount` refuses ("must be superuser"). These answer
+`409 {"error": "not_supported", ...}`; `GET /api/storage` reports `can_eject: false, can_format: false`
+and the UI hides the buttons. Meridian supports FAT32 drives and keeps each file under 4 GB.
 
 ## Developer tools
 

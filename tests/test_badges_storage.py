@@ -45,6 +45,12 @@ class AssemblerTests(unittest.TestCase):
         t[0] = 1.0
         self.assertEqual(press(asm, "222"), ["111", "222"])
 
+    def test_keypad_slash(self):
+        asm = KeyAssembler()
+        for code in (98, 2, 98):                          # keypad '/', '1', keypad '/'
+            asm.feed(1, code, 1)
+        self.assertEqual(asm.feed(1, badges.KEY_KPENTER, 1), "/1/")
+
     def test_ignores_non_key_events_and_max_len(self):
         asm = KeyAssembler(max_len=3)
         self.assertIsNone(asm.feed(0, 0, 0))
@@ -129,7 +135,8 @@ class StorageTests(unittest.TestCase):
 
     def test_warnings(self):
         w = storage.warnings_for({"fs_type": "vfat", "read_only": True}, {"size": 100, "free": 5}, 10)
-        self.assertEqual(len(w), 3)
+        self.assertEqual(len(w), 2)                       # read-only + low space; FAT32 itself is fine
+        self.assertEqual(storage.warnings_for({"fs_type": "vfat", "read_only": False}, {"size": 100, "free": 50}, 10), [])
 
 
 if __name__ == "__main__":
