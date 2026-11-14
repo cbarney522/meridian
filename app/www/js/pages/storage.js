@@ -3,6 +3,7 @@
 // data is kept. If it's missing, the reader buffers events in its small internal storage.
 import { api, h, fill } from "../api.js";
 import { toast, saveBar, fmtBytes, errText } from "../ui.js";
+import { driveBrowser } from "./drive-browser.js";
 
 export function render(root, ctx) {
   const canEdit = ctx.session.permissions.includes("hardware.edit");
@@ -15,11 +16,12 @@ export function render(root, ctx) {
   const devBox = h("div", { class: "dev-box", hidden: !dev });
   const bar = saveBar({ onSave: save, onDiscard: () => { state.form = { ...state.data.settings }; drawSettings(); changed(); } });
   const dialog = formatDialog();
+  const browser = driveBrowser();
 
   root.append(
     h("h1", {}, "Data drive"),
     h("p", { class: "subtitle" }, "The USB drive that holds the event outbox, event history and logs."),
-    msg.el, body,
+    msg.el, body, browser.el,
     h("section", { class: "card", style: { marginTop: "16px" } }, h("h2", {}, "Retention & alerts"), settingsBox),
     devBox, bar.el, dialog.el,
   );
@@ -31,6 +33,7 @@ export function render(root, ctx) {
       state.data = d;
       if (first || resetForm) { state.form = { ...d.settings }; drawSettings(); }
       draw();
+      browser.setMounted(Boolean(d.drive.mounted));
     } catch (err) {
       fill(body, h("div", { class: "notice bad" }, "Can't read storage status: ", errText(err)));
     }
@@ -89,7 +92,10 @@ export function render(root, ctx) {
           h("p", { class: "hint" }, "Small emergency buffer used only when the data drive is missing or ejected.")),
         cap ? h("section", { class: "card wide" }, h("h2", {}, "What's using the space"),
           h("div", { class: "bars usage-bars" }, d.usage.map((u) =>
-            h("div", { class: "bar-row" },
+            h("div", { class: "bar-row" + (u.browse ? " clickable" : ""), role: u.browse ? "button" : null, tabindex: u.browse ? "0" : null,
+                       title: u.browse ? "Show these files below" : null,
+                       onclick: u.browse ? () => browser.go(u.browse.scope, u.browse.path, true) : null,
+                       onkeydown: u.browse ? (e) => { if (e.key === "Enter") browser.go(u.browse.scope, u.browse.path, true); } : null },
               h("span", {}, u.label, h("div", { class: "sub mono" }, u.path)),
               h("div", { class: "bar-track" }, h("div", { class: "bar-fill", style: { width: `${(u.bytes / maxItem) * 100}%` } })),
               h("span", { class: "n" }, fmtBytes(u.bytes)))))) : null,

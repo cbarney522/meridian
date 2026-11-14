@@ -295,3 +295,27 @@ a { color: var(--accent-strong); }
 /* radio buttons inside dialogs: don't inherit text-box styling */
 .dialog .field input[type=radio], .dialog .field input[type=checkbox] { padding: 0; border: 0; width: auto; flex: none; margin: 0; }
 .radio { justify-content: flex-start; align-self: flex-start; white-space: nowrap; cursor: pointer; }
+
+/* ---------- drive browser ---------- */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.seg-btn { font: inherit; font-size: 12px; border: 0; background: var(--panel); padding: 3px 10px; cursor: pointer; color: var(--text); }
+.seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn.on { background: var(--accent-strong); color: #fff; }
+.path-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 8px; font-family: var(--mono); font-size: 13px; }
+.crumb { font: inherit; background: none; border: 0; color: var(--accent-strong); cursor: pointer; padding: 2px 3px; border-radius: 3px; }
+.crumb:hover { background: #e7f1fb; }
+.crumb.current { color: var(--text); font-weight: 600; cursor: default; }
+.crumb-sep { color: #a5b1bd; }
+.browse-table th { padding: 7px 12px; color: var(--muted); font-weight: 600; }
+.browse-table td { padding: 6px 12px; }
+.browse-table tr.clickable, .bar-row.clickable { cursor: pointer; }
+.bar-row.clickable:hover span:first-child { color: var(--accent-strong); text-decoration: underline; }
+.link-btn { font: inherit; background: none; border: 0; padding: 0; color: var(--accent-strong); cursor: pointer; }
+.ico { display: inline-block; width: 14px; height: 11px; margin-right: 8px; vertical-align: -1px; border-radius: 2px; }
+.ico-dir { background: #e0b44a; position: relative; }
+.ico-dir::before { content: ""; position: absolute; top: -3px; left: 0; width: 6px; height: 4px; background: #e0b44a; border-radius: 2px 2px 0 0; }
+.ico-file { width: 10px; height: 13px; border: 1.5px solid #9aa8b6; border-radius: 1px; margin-left: 2px; margin-right: 10px; }
+.ico-link, .ico-other { width: 10px; height: 10px; border: 1.5px dashed #9aa8b6; border-radius: 50%; margin-left: 2px; margin-right: 10px; }
+.ico-up::before { content: "↰"; color: var(--muted); }
+.ico-up { width: auto; height: auto; }
+.browse-foot { margin: 10px 0 0; }

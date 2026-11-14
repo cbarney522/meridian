@@ -415,10 +415,14 @@ class StorageMock:
                 used = sum(self.usage.values()) + int(self.size * 0.012)      # filesystem overhead
                 cap = {"size": self.size, "used": used, "free": self.size - used}
             items = [
-                {"id": "outbox", "label": "Event outbox (SQLite)", "path": "data/outbox.db", "bytes": self.usage["outbox"]},
-                {"id": "events", "label": "Event history (SQLite)", "path": "data/events.db", "bytes": self.usage["events"]},
-                {"id": "logs", "label": "Log files", "path": "data/logs/", "bytes": self.usage["logs"]},
-                {"id": "other", "label": "Other", "path": "data/", "bytes": self.usage["other"]},
+                {"id": "outbox", "label": "Event outbox (SQLite)", "path": "meridian/outbox.db", "bytes": self.usage["outbox"],
+                 "browse": {"scope": "meridian", "path": ""}},
+                {"id": "events", "label": "Event history (SQLite)", "path": "meridian/events.db", "bytes": self.usage["events"],
+                 "browse": {"scope": "meridian", "path": ""}},
+                {"id": "logs", "label": "Log files", "path": "meridian/logs/", "bytes": self.usage["logs"],
+                 "browse": {"scope": "meridian", "path": "logs"}},
+                {"id": "other", "label": "Other files", "path": "/", "bytes": self.usage["other"],
+                 "browse": {"scope": "drive", "path": ""}},
             ] if cap else []
             return {
                 "revision": self.revision,
@@ -482,6 +486,27 @@ class StorageMock:
 
 
 STORAGE = StorageMock()
+
+
+def _fake_drive():
+    """A small fake USB stick for the read-only browser (sparse files fake their sizes)."""
+    root = tempfile.mkdtemp(prefix="meridian-drive-")
+    layout = {
+        "meridian/outbox.db": 2_150_000, "meridian/events.db": 412_000_000,
+        "meridian/logs/meridian-2026-11-12.log": 31_000_000, "meridian/logs/meridian-2026-11-13.log": 28_500_000,
+        "meridian/logs/meridian-2026-11-14.log": 25_500_000,
+        "System Volume Information/IndexerVolumeGuid": 76, "Photos/IMG_0001.JPG": 3_400_000,
+        "Photos/IMG_0002.JPG": 3_100_000, "setup.exe": 8_700_000,
+    }
+    for rel, size in layout.items():
+        path = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.truncate(size)
+    return root
+
+
+FAKE_DRIVE = _fake_drive()
 
 
 # ---------------------------------------------------------------- HTTP
@@ -563,6 +588,22 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("GET")
+        if p == "/api/storage/browse":
+            if not self.require("hardware.view"):
+                return
+            q = parse_qs(url.query)
+            scope, rel = q.get("scope", ["meridian"])[0], q.get("path", [""])[0]
+            can_drive = ACCESS.can(role, "hardware.edit") or ACCESS.can(role, "dev.tools")
+            if not STORAGE.mounted or STORAGE._drive()[1] is None:
+                return self.send_json({"error": "no_drive", "details": ["No mounted data drive."]}, HTTPStatus.CONFLICT)
+            if scope == "drive" and not can_drive:
+                return self.send_json({"error": "forbidden", "details": ["Browsing the whole drive needs hardware.edit or dev.tools."]}, HTTPStatus.FORBIDDEN)
+            base = FAKE_DRIVE if scope == "drive" else os.path.join(FAKE_DRIVE, "meridian")
+            try:
+                r = storage.list_dir(base, rel)
+            except storage.BrowseError as e:
+                return self.send_json({"error": "invalid", "details": [str(e)]}, HTTPStatus.BAD_REQUEST)
+            return self.send_json(dict(r, scope=scope, exists=True, can_browse_drive=can_drive))
         if p == "/api/dev/diagnostics":
             if self.require("dev.tools"):
                 self.send_json({"diag": "Meridian diagnostics (mock server)\nkernel:   Linux mock\n--- USB (sysfs)\n  1-1.1  0c27:3bfa  pcProx Plus\n",

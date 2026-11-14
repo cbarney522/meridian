@@ -224,8 +224,10 @@ class App:
         if cap:
             mdir = os.path.join(mount["mount_point"], "meridian")
             mine = storage.dir_size(mdir)
-            usage = [{"id": "meridian", "label": "Meridian data", "path": "meridian/", "bytes": mine},
-                     {"id": "other", "label": "Other files", "path": "/", "bytes": max(0, cap["used"] - mine)}]
+            usage = [{"id": "meridian", "label": "Meridian data", "path": "meridian/", "bytes": mine,
+                      "browse": {"scope": "meridian", "path": ""}},
+                     {"id": "other", "label": "Other files", "path": "/", "bytes": max(0, cap["used"] - mine),
+                      "browse": {"scope": "drive", "path": ""}}]
         internal = storage.capacity(self.args.data_dir) or {"size": None, "used": None, "free": None}
         return {
             "revision": rev, "assigned_port": port,
@@ -246,6 +248,26 @@ class App:
                         + ([] if mount or not dev else ["The drive is plugged in but the reader hasn't mounted it. "
                                                         "Try unplugging it and plugging it back in."]),
         }
+
+    def storage_browse(self, scope, rel, can_drive):
+        """Read-only listing of one folder on the data drive (Meridian's folder, or the whole drive)."""
+        assign = self.usb_assignments()
+        port = next((p for p, a in assign.items() if a["role"] == "storage"), None)
+        dev = {d["port"]: d for d in usb.scan(self.sysfs)}.get(port) if port else None
+        mount = storage.find_mount(dev["nodes"], self.args.proc_mounts) if dev and dev["nodes"] else None
+        if not mount:
+            return 409, {"error": "no_drive", "details": ["No mounted data drive."]}
+        if scope == "drive" and not can_drive:
+            return 403, {"error": "forbidden", "details": ["Browsing the whole drive needs the hardware.edit or dev.tools permission."]}
+        base = mount["mount_point"] if scope == "drive" else os.path.join(mount["mount_point"], "meridian")
+        if scope != "drive" and not os.path.isdir(base):
+            return 200, {"scope": scope, "exists": False, "path": "", "entries": [], "total": 0, "truncated": False,
+                         "files_bytes": 0, "can_browse_drive": can_drive}
+        try:
+            r = storage.list_dir(base, rel)
+        except storage.BrowseError as e:
+            return 400, {"error": "invalid", "details": [str(e)]}
+        return 200, dict(r, scope=scope, exists=True, can_browse_drive=can_drive)
 
     def storage_save(self, revision, new):
         if not isinstance(new, dict):
@@ -476,6 +498,13 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/dev/diagnostics":
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
+            return
+        if p == "/api/storage/browse":
+            if self.require("hardware.view"):
+                q = parse_qs(url.query)
+                status, result = APP.storage_browse(q.get("scope", ["meridian"])[0], q.get("path", [""])[0],
+                                                    self.can("hardware.edit") or self.can("dev.tools"))
+                self.send_json(result, status)
             return
         if p == "/api/site/readers":
             if self.require("site.view"):

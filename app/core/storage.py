@@ -82,6 +82,56 @@ def dir_size(path):
     return total
 
 
+class BrowseError(Exception):
+    pass
+
+
+def list_dir(base, rel="", limit=500):
+    """List one folder under `base` without leaving it: names, types, sizes, modified times.
+    Read-only; never follows symlinks; refuses '..', absolute paths and anything resolving
+    outside `base`. Returns {"path", "entries", "total", "truncated", "files_bytes"}."""
+    rel = (rel or "").replace("\\", "/").strip("/")
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if any(p == ".." or "\0" in p for p in parts):
+        raise BrowseError("invalid path")
+    base_real = os.path.realpath(base)
+    target = os.path.join(base_real, *parts)
+    real = os.path.realpath(target)
+    if real != base_real and not real.startswith(base_real + os.sep):
+        raise BrowseError("path is outside the drive")
+    if real != os.path.abspath(target):            # a symlink somewhere along the way
+        raise BrowseError("path goes through a link")
+    if not os.path.isdir(real):
+        raise BrowseError("not a folder")
+    entries, total, files_bytes = [], 0, 0
+    try:
+        it = os.scandir(real)
+    except OSError as e:
+        raise BrowseError(e.strerror)
+    with it:
+        for e in it:
+            total += 1
+            try:
+                st = e.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if e.is_symlink():
+                kind = "link"
+            elif e.is_dir(follow_symlinks=False):
+                kind = "dir"
+            elif e.is_file(follow_symlinks=False):
+                kind = "file"
+                files_bytes += st.st_size
+            else:
+                kind = "other"
+            if len(entries) < limit * 4:           # keep a bounded working set before sorting
+                entries.append({"name": e.name, "type": kind,
+                                "size": st.st_size if kind == "file" else None, "modified": int(st.st_mtime)})
+    entries.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
+    return {"path": "/".join(parts), "entries": entries[:limit], "total": total,
+            "truncated": total > limit, "files_bytes": files_bytes}
+
+
 def write_test(mount_point, subdir="meridian"):
     """Try to create, write, fsync and delete a small file in <mount>/<subdir>.
     Returns None if that works, else the error text. Creates <subdir> (Meridian's folder) if needed."""

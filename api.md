@@ -206,6 +206,15 @@ On the reader, assignments are stored in `config.json` in `rw_dir`.
 ```
 Mount lookup, capacity and warnings come from `core/storage.py`. The drive is the port with role `storage`.
 
+### `GET /api/storage/browse?scope=meridian|drive&path=<folder>` — needs `hardware.view`
+Read-only listing of one folder on the data drive: `{"scope", "exists", "path", "entries": [{"name",
+"type": "dir|file|link|other", "size" (files only), "modified" (unix time)}], "total", "truncated",
+"files_bytes", "can_browse_drive"}`. Folders first, at most 500 entries. `scope=meridian` (default) is
+Meridian's own `meridian/` folder; `scope=drive` is the whole drive and also needs `hardware.edit` or
+`dev.tools` (403 otherwise). Paths are relative; `..`, links and anything resolving outside the
+drive are refused (400). No endpoint reads file contents. Each `usage` item in `GET /api/storage`
+carries `browse: {scope, path}` so the UI can jump to it.
+
 ### `PUT /api/storage/settings` — needs `hardware.edit`
 `{"revision": 1, "settings": {...}}`; each value a whole number (retention 1–3650 days, alert 1–50 %).
 

@@ -40,6 +40,7 @@ export const api = {
   previewBadge: (raw, settings) => request("POST", "api/badges/preview", { raw, settings }),
   devSwipe: (port, garbled = false) => request("POST", "api/dev/badge/swipe", { port, garbled }),
   storage: () => request("GET", "api/storage"),
+  browseDrive: (scope, path) => request("GET", `api/storage/browse?scope=${encodeURIComponent(scope)}&path=${encodeURIComponent(path)}`),
   saveStorageSettings: (revision, settings) => request("PUT", "api/storage/settings", { revision, settings }),
   storageAction: (action, confirm) => request("POST", "api/storage/" + action, confirm ? { confirm } : {}),
   devStorageFs: () => request("POST", "api/dev/storage/fs", {}),

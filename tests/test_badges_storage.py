@@ -141,3 +141,44 @@ class StorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrowseTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = os.path.join(self.tmp.name, "drive")
+        os.makedirs(os.path.join(self.root, "meridian", "logs"))
+        os.makedirs(os.path.join(self.root, "Photos"))
+        for rel, n in (("meridian/outbox.db", 100), ("meridian/logs/a.log", 10), ("readme.txt", 5), ("b.txt", 7)):
+            with open(os.path.join(self.root, rel), "wb") as f:
+                f.write(b"x" * n)
+        self.outside = os.path.join(self.tmp.name, "secret")
+        os.makedirs(self.outside)
+        os.symlink(self.outside, os.path.join(self.root, "escape"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_lists_dirs_first_with_sizes(self):
+        r = storage.list_dir(self.root)
+        self.assertEqual([e["name"] for e in r["entries"]], ["meridian", "Photos", "b.txt", "escape", "readme.txt"])
+        types = {e["name"]: e["type"] for e in r["entries"]}
+        self.assertEqual((types["meridian"], types["escape"], types["b.txt"]), ("dir", "link", "file"))
+        self.assertEqual(r["files_bytes"], 12)
+        sub = storage.list_dir(self.root, "meridian")
+        self.assertEqual(sub["path"], "meridian")
+        self.assertEqual({e["name"]: e["size"] for e in sub["entries"]}, {"logs": None, "outbox.db": 100})
+
+    def test_refuses_escapes(self):
+        for bad in ("..", "../secret", "meridian/../../secret", "escape", "escape/x", "readme.txt", "nope"):
+            with self.assertRaises(storage.BrowseError, msg=bad):
+                storage.list_dir(self.root, bad)
+        self.assertEqual(storage.list_dir(self.root, "/meridian/")["path"], "meridian")   # leading slash is relative
+
+    def test_truncation(self):
+        d = os.path.join(self.root, "many")
+        os.makedirs(d)
+        for i in range(30):
+            open(os.path.join(d, f"f{i:02}"), "w").close()
+        r = storage.list_dir(self.root, "many", limit=10)
+        self.assertEqual((len(r["entries"]), r["total"], r["truncated"]), (10, 30, True))
