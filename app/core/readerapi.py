@@ -38,6 +38,12 @@ FIELDS = {
 INTERFACE_LABELS = {"rest": "Impinj IoT Device Interface", "llrp": "LLRP"}
 
 
+class ApiError(Exception):
+    def __init__(self, code, message):
+        super().__init__(f"HTTP {code}: {message}" if code else message)
+        self.code, self.message = code, message
+
+
 class ReaderApi:
     def __init__(self, base="https://localhost", user=None, password=None, timeout=4):
         self.base = base.rstrip("/")
@@ -47,13 +53,42 @@ class ReaderApi:
         self.ctx.check_hostname = False
         self.ctx.verify_mode = ssl.CERT_NONE
 
-    def get(self, path):
-        req = urllib.request.Request(self.base + path, headers={"Accept": "application/json"})
+    def _request(self, method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers={"Accept": "application/json"})
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
         if self.user:
             tok = base64.b64encode(f"{self.user}:{self.password or ''}".encode()).decode()
             req.add_header("Authorization", "Basic " + tok)
-        with urllib.request.urlopen(req, context=self.ctx, timeout=self.timeout) as r:
+        return req
+
+    def get(self, path):
+        with urllib.request.urlopen(self._request("GET", path), context=self.ctx, timeout=self.timeout) as r:
             return json.loads(r.read() or b"null")
+
+    def send(self, method, path, body=None):
+        """POST/PUT/DELETE. Returns the parsed reply (or None). Raises ApiError with the reader's message."""
+        try:
+            with urllib.request.urlopen(self._request(method, path, body), context=self.ctx, timeout=self.timeout) as r:
+                raw = r.read()
+                return json.loads(raw) if raw.strip() else None
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                j = json.loads(e.read() or b"null")
+                detail = (j.get("message") or j.get("detail") or j.get("error") or "") if isinstance(j, dict) else str(j)
+                if isinstance(j, list):
+                    detail = "; ".join(str(x.get("message", x)) if isinstance(x, dict) else str(x) for x in j)
+            except (ValueError, OSError):
+                pass
+            raise ApiError(e.code, detail or e.reason) from None
+        except (urllib.error.URLError, OSError) as e:
+            raise ApiError(0, f"can't reach the reader API: {getattr(e, 'reason', e)}") from None
+
+    def open_stream(self, path, timeout=30):
+        """A long-lived streaming response (caller reads lines and closes it)."""
+        return urllib.request.urlopen(self._request("GET", path), context=self.ctx, timeout=timeout)
 
     def fetch(self):
         """Return {"ok", "error", "items": {...}, "raw": {endpoint: json or error}, "fetched": ts}."""

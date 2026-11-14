@@ -11,6 +11,8 @@ import * as accounts from "./pages/accounts.js";
 import * as about from "./pages/about.js";
 import * as timeLocation from "./pages/time-location.js";
 import * as mqttPage from "./pages/mqtt.js";
+import * as rfidSetup from "./pages/rfid-setup.js";
+import * as tagsPage from "./pages/tags.js";
 import * as placeholder from "./pages/placeholder.js";
 
 // Pages that have real implementations. Everything else in the menu gets the placeholder
@@ -19,7 +21,8 @@ const PAGES = { "/dashboard": dashboard, "/site": site, "/hardware/usb": usbDevi
                 "/hardware/badges": badgeReaders, "/hardware/storage": storagePage,
                 "/dev/debug-log": debugLog, "/system/accounts": accounts,
                 "/system/about": about, "/system/time": timeLocation,
-                "/integrations/mqtt": mqttPage };
+                "/integrations/mqtt": mqttPage, "/hardware/rfid": rfidSetup,
+                "/operations/tags": tagsPage };
 
 const $ = (id) => document.getElementById(id);
 const ctx = { session: null, menuIndex: new Map(), events: null };

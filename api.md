@@ -306,7 +306,7 @@ The reader's clock stays on UTC and is set by chronyd; Meridian can't change the
 | `…/cmd/<name>`, `<prefix>/<site>/all/cmd/<name>` | broker → reader | `{"id": "...", "args": {...}, "expires": <epoch s, optional>}` |
 | `…/ack` | reader → broker | `{"id", "cmd", "ok", "result" \| "error", "ts"}` |
 
-Commands: `ping`, `identify` (`args.seconds`, 1–120), `status`, `info`. Unknown, malformed or expired commands get `ok:false`. While disconnected, outgoing messages wait in a 1000-message in-memory queue (oldest dropped). The client is paho-mqtt 2.2.0, vendored in `app/vendor/paho` (EPL-2.0 / EDL-1.0).
+Commands: `ping`, `identify` (`args.seconds`, 1–120), `status`, `info`, `inventory` (`args.action`: `start` | `stop` | `status`, optional `args.preset`). Unknown, malformed or expired commands get `ok:false`. While disconnected, outgoing messages wait in a 1000-message in-memory queue (oldest dropped). The client is paho-mqtt 2.2.0, vendored in `app/vendor/paho` (EPL-2.0 / EDL-1.0).
 
 ### Event types
 
@@ -318,13 +318,28 @@ Defined in `app/defs/events.json` (also returned as `event_types` by `GET /api/m
 | `usb_detached` | yes | A USB device was removed. | `{"type":"usb_detached","port":"1-1.2","product":"USB Flash Disk","ts":"2026-11-14T08:16:40"}` |
 | `badge` | yes | A keyboard-type device (badge reader, barcode scanner) sent a scan. 'raw' is exactly what it typed; 'result' is the badge ID after this site's badge settings, or why it was rejected. | `{"type":"badge","port":"1-1.1.1","role":"badge_in","product":"RFIDeas pcProx","raw":"I105:0010442","result":{"ok":true,"badge_id":"10442","facility":"105","card":"10442","steps":["removed prefix 'I'","split at ':': facility 105, card 0010442","removed leading zeros"],"error":null},"ts":"2026-11-14T08:17:11"}` |
 | `badge_scan` | planned | A badge was checked against the authorized-users list: granted, or denied with the reason. | `{"type":"badge_scan","badge":"10442","user":"M. Alvarez","result":"granted","door":"crib","ts":"2026-11-14T08:17:11"}` |
-| `tag_exit` | planned | A tagged tool left a zone (taken out of the crib or a drawer). | `{"type":"tag_exit","epc":"3034257BF7194E4000001A85","tool":"Torque wrench #4471","zone":"drawer1","user":"M. Alvarez","ts":"2026-11-14T08:18:03"}` |
-| `tag_enter` | planned | A tagged tool came back into a zone. | `{"type":"tag_enter","epc":"3034257BF7194E4000001A85","tool":"Torque wrench #4471","zone":"drawer1","user":"M. Alvarez","ts":"2026-11-14T16:40:51"}` |
+| `tag_exit` | yes | A tag stopped being read for the 'gone after' time (reason 'gone'), moved to another zone (reason 'moved', with 'to_zone'), or inventory was stopped. dwell_s is how long it was there. | `{"type":"tag_exit","epc":"E28011700000020F1B2C3D4E","zone":"drawer1","antenna":2,"dwell_s":412.6,"reason":"gone","ts":"2026-11-14T08:24:56"}` |
+| `tag_enter` | yes | A tag was read enough times in a zone to count as present (or moved there from another zone: then 'from_zone' is set). Tool names and users are added once the tool list and sessions exist. | `{"type":"tag_enter","epc":"E28011700000020F1B2C3D4E","zone":"drawer1","antenna":2,"rssi_dbm":-55.5,"ts":"2026-11-14T08:18:03"}` |
 | `session_closed` | planned | A badged-in session ended (badge out or timeout), with what was removed and returned. | `{"type":"session_closed","user":"M. Alvarez","badge":"10442","removed":2,"returned":1,"out":["Torque wrench #4471","Crimper #3302"],"in":["Drill DCD791 #1180"],"ts":"2026-11-14T08:19:30"}` |
-| `gpi_change` | planned | A sensor or button input changed (door contact, motion sensor, push button). | `{"type":"gpi_change","input":"door_1","state":"open","ts":"2026-11-14T08:17:14"}` |
+| `gpi_change` | yes | One of the R700's own inputs changed (gpi1, gpi2). Names like 'door_1' come with the I/O map. Reported by the reader's event stream; check it on your firmware. | `{"type":"gpi_change","input":"gpi1","state":"high","source":"reader","ts":"2026-11-14T08:17:14"}` |
 | `rule_fired` | planned | A configured rule's conditions were met and its actions ran. | `{"type":"rule_fired","rule":"Door held open","detail":"door_1 open > 30 s: buzzer on","ts":"2026-11-14T08:17:45"}` |
 | `storage_changed` | planned | The USB data drive was inserted, removed or became unwritable. | `{"type":"storage_changed","action":"removed","port":"1-1.2","ts":"2026-11-14T09:02:10"}` |
 
 ## Live events stream
 
 `GET /api/events` (dashboard.view) is Server-Sent Events. Every event is a plain `data:` message (no `event:` name) with an `id:`, so clients get new types without changes. A fresh connection first receives up to the last 30 events with `"replay": true`. A reconnect that sends `Last-Event-ID` receives only what it missed. The browser keeps the last 100 events per tab; the Dashboard shows them on open (pages that react to events, such as USB devices, Storage and Badge readers, ignore replays).
+
+## RFID (Hardware › RFID › Inventory & zones, Operations › Tags › Tags in field)
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/rfid[?refresh=1]` | rfid.view | `{revision, settings, status, presets}`. `refresh=1` re-reads the reader's preset list and status. |
+| PUT | `/api/rfid` | rfid.edit | `{revision, settings}`. settings: `auto_start`, `preset`, `zones` (`{"1": "portal", ...}`), `ignore_unzoned`, `exit_timeout_s` (1–600), `enter_reads` (1–50), `move_quiet_s` (0–30), `rssi_min_dbm` (-100–0 or null), `epc_prefix` (hex). Applies immediately. |
+| POST | `/api/rfid/start` | rfid.edit | `{preset?}` (default: the saved preset). 502 `reader` with the reader's message if it refuses. |
+| POST | `/api/rfid/stop` | rfid.edit | Stops inventory; tags in the field are reported gone. |
+
+status: `available`, `running`, `reader_status`, `active_preset`, `reader_error`, `stream_connected`, `stream_error`, `stream_lines`, `tags_in_field`, `read_rate` (reads/s over 5 s), `zones` (`{zone: count}`), `total_reads`, `ignored`, `tags` (`[{epc, zone, antenna, rssi_dbm, reads, first_seen, last_seen, seen_ago_s}]`, max 500). `/api/status` → `rfid` carries the summary fields.
+
+Reader calls (Impinj IoT Device Interface, Basic auth with the login from About this reader): `GET /api/v1/profiles/inventory/presets`, `POST /api/v1/profiles/inventory/presets/{id}/start`, `POST /api/v1/profiles/stop`, `GET /api/v1/status`, and the long-lived `GET /api/v1/data/stream` (newline-delimited JSON; `tagInventoryEvent` with `epcHex` or base64 `epc`, `antennaPort`, `peakRssiCdbm`; `gpiTransitionEvent`). The stream reconnects automatically. Unrecognised stream events appear under `rfid_unrecognised_events` in `/api/diagnostics`.
+
+Tracking: a tag is *arrived* after `enter_reads` reads in a zone within `exit_timeout_s`; *left* when unread for `exit_timeout_s` (reason `gone`), or when another zone reads it `enter_reads` times after its own zone has been silent for `move_quiet_s` (reason `moved`, followed by `tag_enter` with `from_zone`). Zones come from antenna ports; unnamed antennas are "Antenna N" unless `ignore_unzoned`.

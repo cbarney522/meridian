@@ -340,3 +340,10 @@ a { color: var(--accent-strong); }
 .copy-cell { display: flex; align-items: center; gap: 8px; }
 .copy-cell .btn { flex: none; }
 .copy-cell .mono { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+
+/* RFID */
+.statline { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; font-size: 14px; }
+.th-plain { display: block; padding: 8px 12px; }
+.tags-table td { padding: 6px 12px; }
+.table td.field input { width: 100%; box-sizing: border-box; }
+input[type=search] { font: 13px var(--mono); padding: 7px 10px; border: 1px solid var(--line); border-radius: 4px; min-width: 260px; }

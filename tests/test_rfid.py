@@ -1,0 +1,226 @@
+"""Tests for core/rfid.py: parsing, the tag tracker, and the engine against a fake IoT Device Interface."""
+import base64
+import json
+import os
+import sys
+import threading
+import time
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
+from core import rfid  # noqa: E402
+from core.readerapi import ReaderApi, ApiError  # noqa: E402
+
+EPC = "E28011700000020F1B2C3D4E"
+EPC2 = "300833B2DDD9014000000001"
+
+
+def tag_line(epc=EPC, port=1, rssi=-5500, b64=False, v0=False):
+    ev = {"antennaPort": port, "peakRssiCdbm": rssi}
+    if b64:
+        ev["epc"] = base64.b64encode(bytes.fromhex(epc)).decode()
+    else:
+        ev["epcHex"] = epc
+    if v0:
+        return json.dumps({"TagInventoryEvent": ev, "timestamp": "2026-11-14T08:00:00Z"})
+    return json.dumps({"timestamp": "2026-11-14T08:00:00Z", "hostname": "impinj-17-1b-e6",
+                       "eventType": "tagInventory", "tagInventoryEvent": ev})
+
+
+class ParseTests(unittest.TestCase):
+    def test_variants(self):
+        self.assertEqual(rfid.parse_event(tag_line()), ("tag", EPC, 1, -5500))
+        self.assertEqual(rfid.parse_event(tag_line(b64=True, port=3))[1:3], (EPC, 3))
+        self.assertEqual(rfid.parse_event(tag_line(v0=True, b64=True))[1], EPC)
+        # base64url (Impinj v0 docs) with - and _
+        url = base64.urlsafe_b64encode(bytes.fromhex("FBFF" + "00" * 10)).decode()
+        self.assertEqual(rfid.epc_hex({"epc": url}), "FBFF" + "00" * 10)
+        self.assertEqual(rfid.epc_hex({"epc": EPC}), EPC)                  # hex in "epc"
+        g = rfid.parse_event(json.dumps({"eventType": "gpiTransition", "gpiTransitionEvent": {"gpi": 2, "transition": "low-to-high"}}))
+        self.assertEqual(g, ("gpi", 2, "high"))
+        self.assertEqual(rfid.parse_event('{"inventoryStatusEvent": {"inventoryStatus": "running"}}'), ("other", "inventorystatusevent"))
+        self.assertEqual(rfid.parse_event("not json")[0], "other")
+
+
+class TrackerTests(unittest.TestCase):
+    def setUp(self):
+        self.t = rfid.TagTracker(dict(rfid.DEFAULTS, zones={"1": "portal", "2": "drawer1"}, exit_timeout_s=5,
+                                      enter_reads=2, move_quiet_s=1))
+
+    def test_enter_needs_two_reads(self):
+        self.assertEqual(self.t.read(EPC, 1, -5000, now=0), [])
+        ev = self.t.read(EPC, 1, -5000, now=0.2)
+        self.assertEqual(ev, [("tag_enter", {"epc": EPC, "zone": "portal", "antenna": 1, "rssi_dbm": -50.0})])
+        self.assertEqual(self.t.read(EPC, 1, -5000, now=0.4), [])           # no repeat while present
+
+    def test_stray_read_forgotten(self):
+        self.t.read(EPC, 1, -5000, now=0)
+        self.t.sweep(now=6)
+        self.assertEqual(self.t.read(EPC, 1, -5000, now=6.1), [])           # count restarted
+
+    def test_exit_after_timeout_with_dwell(self):
+        for i in range(5):
+            self.t.read(EPC, 2, -6000, now=i)
+        self.assertEqual(self.t.sweep(now=8), [])
+        ev = self.t.sweep(now=9.5)
+        self.assertEqual(ev[0][0], "tag_exit")
+        self.assertEqual(ev[0][1]["zone"], "drawer1")
+        self.assertEqual(ev[0][1]["dwell_s"], 4)
+        self.assertEqual(ev[0][1]["reason"], "gone")
+        self.assertEqual(self.t.snapshot(now=9.5)["tags_in_field"], 0)
+
+    def test_move_between_zones(self):
+        self.t.read(EPC, 1, -5000, now=0); self.t.read(EPC, 1, -5000, now=0.1)
+        # read once in drawer1 while still seen in portal: no move
+        self.assertEqual(self.t.read(EPC, 2, -5000, now=0.5), [])
+        self.t.read(EPC, 1, -5000, now=0.6)
+        self.assertEqual(self.t.read(EPC, 2, -5000, now=0.7), [])
+        # portal silent >1 s (last read 0.6) and a second read in drawer1: move
+        ev = self.t.read(EPC, 2, -5000, now=1.8)
+        self.assertEqual([e[0] for e in ev], ["tag_exit", "tag_enter"])
+        self.assertEqual(ev[0][1]["to_zone"], "drawer1")
+        self.assertEqual(ev[1][1]["from_zone"], "portal")
+
+    def test_filters_and_unzoned(self):
+        t = rfid.TagTracker(dict(rfid.DEFAULTS, zones={"1": "portal"}, rssi_min_dbm=-60, epc_prefix="E280",
+                                 ignore_unzoned=True, enter_reads=1))
+        self.assertEqual(t.read(EPC2, 1, -5000, now=0), [])                # wrong prefix
+        self.assertEqual(t.read(EPC, 1, -7000, now=0), [])                 # too weak
+        self.assertEqual(t.read(EPC, 3, -5000, now=0), [])                 # antenna without zone
+        self.assertEqual(t.read(EPC, 1, -5000, now=0)[0][0], "tag_enter")
+        self.assertEqual(t.snapshot(now=0)["ignored"], 3)
+        u = rfid.TagTracker(dict(rfid.DEFAULTS, enter_reads=1))
+        self.assertEqual(u.read(EPC, 4, None, now=0)[0][1]["zone"], "Antenna 4")
+
+    def test_snapshot(self):
+        for i in range(10):
+            self.t.read(EPC, 1, -5000, now=i * 0.1)
+            self.t.read(EPC2, 2, -5000, now=i * 0.1)
+        s = self.t.snapshot(now=1)
+        self.assertEqual(s["tags_in_field"], 2)
+        self.assertEqual(s["zones"], {"drawer1": 1, "portal": 1})
+        self.assertEqual(s["read_rate"], 4.0)
+
+
+class ValidateTests(unittest.TestCase):
+    def test_validate(self):
+        s, e = rfid.validate({"zones": {"1": "portal", "2": "", "3": "drawer 1"}, "rssi_min_dbm": "-65", "epc_prefix": "e280"}, {})
+        self.assertEqual(e, [])
+        self.assertEqual(s["zones"], {"1": "portal", "3": "drawer 1"})
+        self.assertEqual(s["rssi_min_dbm"], -65.0)
+        self.assertEqual(s["epc_prefix"], "E280")
+        _, e = rfid.validate({"auto_start": True, "zones": {"99": "x", "1": "bad/name"}, "exit_timeout_s": 0,
+                              "enter_reads": 0, "rssi_min_dbm": 5, "epc_prefix": "XYZ"}, {})
+        self.assertEqual(len(e), 7)
+
+
+# ---------------------------------------------------------------- fake reader
+class FakeReader(BaseHTTPRequestHandler):
+    state = {"running": False, "preset": None, "lines": []}
+    stream_ready = threading.Event()
+
+    def log_message(self, *a):
+        pass
+
+    def reply(self, code, body=None):
+        data = json.dumps(body).encode() if body is not None else b""
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        st = FakeReader.state
+        if self.path == "/api/v1/profiles/inventory/presets":
+            return self.reply(200, ["default", "crib-portal"])
+        if self.path == "/api/v1/status":
+            return self.reply(200, {"status": "running" if st["running"] else "idle",
+                                    "activePreset": {"id": st["preset"]} if st["running"] else None})
+        if self.path == "/api/v1/data/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            FakeReader.stream_ready.set()
+            try:
+                while True:
+                    while st["lines"]:
+                        self.wfile.write((st["lines"].pop(0) + "\n").encode())
+                    self.wfile.write(b"\n")
+                    self.wfile.flush()
+                    time.sleep(0.05)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+        self.reply(404, {"message": "no such thing"})
+
+    def do_POST(self):
+        st = FakeReader.state
+        if self.path == "/api/v1/profiles/inventory/presets/crib-portal/start":
+            st.update(running=True, preset="crib-portal")
+            return self.reply(204)
+        if self.path.endswith("/start"):
+            return self.reply(404, {"message": "Preset not found"})
+        if self.path == "/api/v1/profiles/stop":
+            st.update(running=False, preset=None)
+            return self.reply(204)
+        self.reply(404, {"message": "no such thing"})
+
+
+class EngineTests(unittest.TestCase):
+    def setUp(self):
+        FakeReader.state.update(running=False, preset=None, lines=[])
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeReader)
+        self.srv.daemon_threads = True
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        self.events = []
+        self.eng = rfid.RfidEngine(lambda: ReaderApi(base, "root", "impinj"),
+                                   dict(rfid.DEFAULTS, zones={"1": "portal"}, preset="crib-portal", exit_timeout_s=1,
+                                        enter_reads=2, auto_start=True),
+                                   lambda t, **d: self.events.append((t, d)))
+        self.eng.start_threads()
+
+    def tearDown(self):
+        self.eng._stop.set()
+        self.srv.shutdown()
+        self.srv.server_close()
+
+    def wait(self, pred, timeout=8):
+        end = time.time() + timeout
+        while time.time() < end:
+            if pred():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_end_to_end(self):
+        self.assertTrue(self.wait(lambda: self.eng.status()["running"]), "auto-start")
+        self.assertEqual(self.eng.status()["active_preset"], "crib-portal")
+        self.assertEqual(self.eng.refresh_presets(), ["default", "crib-portal"])
+        self.assertTrue(self.wait(lambda: self.eng.stream_connected))
+        FakeReader.state["lines"] += [tag_line(), tag_line(b64=True),
+                                      json.dumps({"gpiTransitionEvent": {"gpi": 1, "transition": "high-to-low"}}),
+                                      json.dumps({"somethingNewEvent": {}})]
+        self.assertTrue(self.wait(lambda: any(e[0] == "tag_enter" for e in self.events)))
+        self.assertIn(("gpi_change", {"input": "gpi1", "state": "low", "source": "reader"}), self.events)
+        self.assertEqual(self.eng.status()["tags_in_field"], 1)
+        self.assertEqual(self.eng.last_other[0]["kind"], "somethingnewevent")
+        self.assertTrue(self.wait(lambda: any(e[0] == "tag_exit" for e in self.events), 5), "gone after timeout")
+        self.eng.stop_inventory()
+        self.assertFalse(self.eng.status()["running"])
+        with self.assertRaises(ApiError) as cm:
+            self.eng.start_inventory("nope")
+        self.assertIn("Preset not found", str(cm.exception))
+
+    def test_stop_reports_tags_gone(self):
+        self.assertTrue(self.wait(lambda: self.eng.stream_connected))
+        FakeReader.state["lines"] += [tag_line(EPC2), tag_line(EPC2)]
+        self.assertTrue(self.wait(lambda: self.eng.status()["tags_in_field"] == 1))
+        self.eng.stop_inventory()
+        self.assertEqual(self.eng.status()["tags_in_field"], 0)
+        self.assertTrue(any(e[0] == "tag_exit" and e[1]["epc"] == EPC2 for e in self.events))
+
+
+if __name__ == "__main__":
+    unittest.main()

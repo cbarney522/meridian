@@ -67,30 +67,31 @@
     },
     {
       "type": "tag_exit",
-      "built": false,
-      "label": "Tool removed",
-      "meaning": "A tagged tool left a zone (taken out of the crib or a drawer).",
+      "built": true,
+      "label": "Tag left a zone",
+      "meaning": "A tag stopped being read for the 'gone after' time (reason 'gone'), moved to another zone (reason 'moved', with 'to_zone'), or inventory was stopped. dwell_s is how long it was there.",
       "sample": {
         "type": "tag_exit",
-        "epc": "3034257BF7194E4000001A85",
-        "tool": "Torque wrench #4471",
+        "epc": "E28011700000020F1B2C3D4E",
         "zone": "drawer1",
-        "user": "M. Alvarez",
-        "ts": "2026-11-14T08:18:03"
+        "antenna": 2,
+        "dwell_s": 412.6,
+        "reason": "gone",
+        "ts": "2026-11-14T08:24:56"
       }
     },
     {
       "type": "tag_enter",
-      "built": false,
-      "label": "Tool returned",
-      "meaning": "A tagged tool came back into a zone.",
+      "built": true,
+      "label": "Tag arrived in a zone",
+      "meaning": "A tag was read enough times in a zone to count as present (or moved there from another zone: then 'from_zone' is set). Tool names and users are added once the tool list and sessions exist.",
       "sample": {
         "type": "tag_enter",
-        "epc": "3034257BF7194E4000001A85",
-        "tool": "Torque wrench #4471",
+        "epc": "E28011700000020F1B2C3D4E",
         "zone": "drawer1",
-        "user": "M. Alvarez",
-        "ts": "2026-11-14T16:40:51"
+        "antenna": 2,
+        "rssi_dbm": -55.5,
+        "ts": "2026-11-14T08:18:03"
       }
     },
     {
@@ -116,13 +117,14 @@
     },
     {
       "type": "gpi_change",
-      "built": false,
+      "built": true,
       "label": "Input changed",
-      "meaning": "A sensor or button input changed (door contact, motion sensor, push button).",
+      "meaning": "One of the R700's own inputs changed (gpi1, gpi2). Names like 'door_1' come with the I/O map. Reported by the reader's event stream; check it on your firmware.",
       "sample": {
         "type": "gpi_change",
-        "input": "door_1",
-        "state": "open",
+        "input": "gpi1",
+        "state": "high",
+        "source": "reader",
         "ts": "2026-11-14T08:17:14"
       }
     },

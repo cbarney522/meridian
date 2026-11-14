@@ -15,7 +15,9 @@ def emitted_types():
         for name in os.listdir(os.path.join(ROOT, d)):
             if name.endswith(".py"):
                 with open(os.path.join(ROOT, d, name), encoding="utf-8") as f:
-                    found |= set(re.findall(r'emit\(\s*"([a-z_]+)"', f.read()))
+                    text = f.read()
+                    found |= set(re.findall(r'emit\(\s*"([a-z_]+)"', text))
+                    found |= set(re.findall(r'append\(\(\s*"([a-z_]+)",\s*\{', text))   # tracker results
     return {RENAME.get(t, t) for t in found - SKIP}
 
 

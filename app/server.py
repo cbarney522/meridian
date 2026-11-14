@@ -35,7 +35,8 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
-from core import accounts_api, netinfo, timeloc, mqtt_link  # noqa: E402
+from core import accounts_api, netinfo, timeloc, mqtt_link, rfid  # noqa: E402
+from core.readerapi import ApiError  # noqa: E402
 from core.readerapi import ReaderApi  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
 
@@ -119,6 +120,8 @@ class App:
     def start_watchers(self):
         UsbWatcher(self.sysfs, self.bus.emit).start()
         threading.Thread(target=self._reader_info_loop, daemon=True, name="reader-info").start()
+        self.rfid = rfid.RfidEngine(lambda: self.reader_api()[0], self.store.get("rfid", rfid.DEFAULTS)[1], self.bus.emit)
+        self.rfid.start_threads()
         self.mqtt = mqtt_link.MqttLink(self.mqtt_identity, self.mqtt_command, self.bus.emit)
         threading.Thread(target=self._mqtt_start, daemon=True, name="mqtt-start").start()
         threading.Thread(target=self._mqtt_bridge, daemon=True, name="mqtt-bridge").start()
@@ -212,7 +215,20 @@ class App:
             return {k: s[k] for k in ("reader", "usb", "mqtt")}
         if name == "info":
             return self.reader_info()
-        raise ValueError(f"unknown command '{name}' (try ping, identify, status or info)")
+        if name == "inventory":
+            action = str(args.get("action", "")).lower()
+            try:
+                if action == "start":
+                    self.rfid.start_inventory(args.get("preset") or None)
+                elif action == "stop":
+                    self.rfid.stop_inventory()
+                elif action != "status":
+                    raise ValueError("args.action must be start, stop or status")
+            except ApiError as e:
+                raise ValueError(f"reader refused: {e}") from None
+            st = self.rfid.status()
+            return {k: st[k] for k in ("running", "active_preset", "tags_in_field", "read_rate", "zones")}
+        raise ValueError(f"unknown command '{name}' (try ping, identify, status, info or inventory)")
 
     def mqtt_settings(self):
         return self.store.get("mqtt", mqtt_link.DEFAULTS)
@@ -265,6 +281,33 @@ class App:
                 "tz_database": timeloc.zone("America/New_York") is not None,
                 "tz_path": list(getattr(timeloc.zoneinfo, "TZPATH", ())),
                 "ntp": timeloc.ntp_status(), "reader_ntp_config": ntp_cfg, "sun": sun}
+
+    # -- RFID
+    def rfid_view(self, refresh=False):
+        rev, cfg = self.store.get("rfid", rfid.DEFAULTS)
+        if refresh or not self.rfid.presets_cache:
+            self.rfid.refresh_presets()
+            self.rfid.refresh_status()
+        return {"revision": rev, "settings": cfg, "status": self.rfid.status(), "presets": self.rfid.presets_cache}
+
+    def rfid_save(self, revision, body):
+        _, cur = self.store.get("rfid", rfid.DEFAULTS)
+        clean, errors = rfid.validate(body, cur)
+        if errors:
+            return 400, {"error": "invalid", "details": errors}
+        rev = self.store.put("rfid", revision, clean)
+        if rev is None:
+            return 409, {"error": "conflict"}
+        self.rfid.configure(clean)
+        return 200, {"ok": True, "revision": rev}
+
+    def _rfid_brief(self):
+        r = getattr(self, "rfid", None)
+        if not r:
+            return {"available": False, "running": False, "read_rate": 0, "tags_in_field": 0, "zones": {}}
+        st = r.status()
+        return {k: st[k] for k in ("available", "running", "read_rate", "tags_in_field", "zones", "active_preset",
+                                   "stream_connected", "reader_error")}
 
     def _mqtt_brief(self):
         m = getattr(self, "mqtt", None)
@@ -488,6 +531,9 @@ class App:
                 "log": read(os.path.join(d, "log", "meridian.log"), log_bytes),
                 "badge_listener": self.badges.status() if self.badges else None,
                 "reader_api_raw": (getattr(self, "reader_cache", None) or {}).get("raw"),
+                "rfid": {k: v for k, v in self.rfid.status().items() if k != "tags"} if getattr(self, "rfid", None) else None,
+                "rfid_reader_status_raw": getattr(self, "rfid", None) and self.rfid.reader.get("raw"),
+                "rfid_unrecognised_events": list(self.rfid.last_other) if getattr(self, "rfid", None) else None,
                 "app_version": app_version(), "data_dir": d}
 
     # -- status
@@ -515,7 +561,7 @@ class App:
                        "api_ok": info["api"]["ok"], "api_error": info["api"]["error"],
                        "uptime_s": int(read_first("/proc/uptime", float) or 0), "ntp_synced": self.ntp_synced(),
                        "temp_c": round(temp / 1000, 1) if temp else None},
-            "rfid": {"available": False, "running": False, "read_rate": 0, "tags_in_field": 0, "zones": {}},
+            "rfid": self._rfid_brief(),
             "mqtt": self._mqtt_brief(),
             "usb": {"drive": drive["present"], "free_mb": (drive["capacity"]["free"] // 1048576) if drive["capacity"] else 0,
                     "badge_in": role_ok("badge_in"), "badge_out": role_ok("badge_out")},
@@ -679,6 +725,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
             return
+        if p == "/api/rfid":
+            if self.require("rfid.view"):
+                self.send_json(APP.rfid_view(refresh="refresh=1" in (urlparse(self.path).query or "")))
+            return
         if p == "/api/mqtt":
             if self.require("integrations.view"):
                 rev, cfg = APP.mqtt_settings()
@@ -736,6 +786,15 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError):
                 return self.send_json({"error": "bad_request"}, 400)
             status, result = APP.reader_api_save(body.get("revision"), body)
+            return self.send_json(result, status)
+        if p == "/api/rfid":
+            if not self.require("rfid.edit"):
+                return
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, 400)
+            status, result = APP.rfid_save(body.get("revision"), body.get("settings"))
             return self.send_json(result, status)
         if p == "/api/mqtt":
             if not self.require("integrations.edit"):
@@ -799,6 +858,22 @@ class Handler(BaseHTTPRequestHandler):
             APP.sessions.drop_user(self.account["user"], keep=self.token)   # sign out their other sessions
             log.info("%s changed their password", self.account["user"])
             return self.send_json({"ok": True})
+        if p in ("/api/rfid/start", "/api/rfid/stop"):
+            if not self.require("rfid.edit"):
+                return
+            try:
+                if p.endswith("start"):
+                    pid = APP.rfid.start_inventory(body.get("preset") or None)
+                    log.info("%s started inventory (%s)", self.account["user"], pid)
+                else:
+                    APP.rfid.stop_inventory()
+                    log.info("%s stopped inventory", self.account["user"])
+            except ValueError as e:
+                return self.send_json({"error": "invalid", "details": [str(e)]}, 400)
+            except ApiError as e:
+                hint = " Check the reader login on System › About this reader." if e.code in (401, 403) else ""
+                return self.send_json({"error": "reader", "details": [f"The reader refused: {e}.{hint}"]}, 502)
+            return self.send_json({"ok": True, "status": APP.rfid.status()})
         if p == "/api/mqtt/test":
             if not self.require("integrations.edit"):
                 return

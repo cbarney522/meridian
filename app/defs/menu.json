@@ -16,6 +16,7 @@
           { "id": "override", "label": "Manual outputs",  "route": "/operations/override", "perm": "io.override" }
         ]},
         { "label": "Tags", "items": [
+          { "id": "tags",    "label": "Tags in field", "route": "/operations/tags",         "perm": "rfid.view" },
           { "id": "unknown", "label": "Unknown tags", "route": "/operations/unknown-tags", "perm": "tools.edit" }
         ]}
       ]
@@ -24,9 +25,7 @@
       "id": "hardware", "label": "Hardware",
       "groups": [
         { "label": "RFID", "items": [
-          { "id": "antennas", "label": "Antennas",          "route": "/hardware/antennas", "perm": "rfid.view" },
-          { "id": "zones",    "label": "Zones",             "route": "/hardware/zones",    "perm": "rfid.view" },
-          { "id": "profiles", "label": "Inventory profile", "route": "/hardware/profiles", "perm": "rfid.view" }
+          { "id": "rfid",     "label": "Inventory & zones", "route": "/hardware/rfid",     "perm": "rfid.view" }
         ]},
         { "label": "I/O", "items": [
           { "id": "iomap",  "label": "I/O map",       "route": "/hardware/io-map", "perm": "hardware.view" },

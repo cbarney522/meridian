@@ -7,6 +7,7 @@ const EXAMPLES = [
   ["identify", { id: "2", args: { seconds: 10 } }, "Shows on the Dashboard's live events (flashes a light once outputs exist)."],
   ["status", { id: "3" }, "Replies with reader health, USB and MQTT status."],
   ["info", { id: "4" }, "Replies with model, serial, firmware, region and network details."],
+  ["inventory", { id: "5", args: { action: "start" } }, "Starts the saved preset (\"stop\" stops it, \"status\" reports). Optional args.preset picks another."],
 ];
 
 export function render(root, ctx) {

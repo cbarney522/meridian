@@ -2,7 +2,7 @@
 import { api, h } from "../api.js";
 
 const EVENT_LABEL = {
-  badge_scan: "Badge", tag_enter: "Returned", tag_exit: "Removed",
+  badge_scan: "Badge", tag_enter: "Arrived", tag_exit: "Left",
   session_closed: "Session closed", gpi_change: "Input", rule_fired: "Rule fired",
   usb_attached: "USB attached", usb_detached: "USB removed", storage_changed: "Storage",
   mqtt_state: "MQTT", identify: "Identify", badge_raw: "Scan",
@@ -27,8 +27,10 @@ export function render(root, ctx) {
 
   let first = true;
   const unsub = ctx.events.subscribe((ev) => {
+    const row = eventRow(ev);
+    if (!row) return;
     if (first) { feed.replaceChildren(); first = false; }
-    feed.prepend(eventRow(ev));
+    feed.prepend(row);
     while (feed.children.length > MAX_EVENTS) feed.lastChild.remove();
     if (!ev.replay && ev.type !== "gpi_change") refresh();   // counts and session changed
   }, { history: true });
@@ -104,14 +106,23 @@ function drawCards(root, s, canAbout) {
 function eventRow(ev) {
   const today = new Date().toISOString().slice(0, 10);
   const time = (ev.ts.slice(0, 10) === today ? "" : ev.ts.slice(5, 10) + " ") + ev.ts.slice(11);
-  let cls = ev.type, text;
+  let cls = ev.type, text, label = EVENT_LABEL[ev.type] || ev.type;
   switch (ev.type) {
     case "badge_scan":
       if (ev.result === "granted") text = `${ev.user} (badge ${ev.badge}) — access granted`;
       else { cls = "denied"; text = `Badge ${ev.badge} — denied (${ev.result.replace("denied_", "")})`; }
       break;
-    case "tag_exit": text = `${ev.tool} from ${ev.zone} by ${ev.user}`; break;
-    case "tag_enter": text = `${ev.tool} to ${ev.zone} by ${ev.user}`; break;
+    case "tag_exit": {
+      const what = ev.tool || ev.epc, who = ev.user ? ` by ${ev.user}` : "";
+      if (ev.reason === "moved") label = "Moved";
+      text = ev.reason === "moved" ? `${what} moved from ${ev.zone} to ${ev.to_zone}${who}`
+        : `${what} left ${ev.zone}${who}${ev.dwell_s !== undefined ? ` after ${fmtDwell(ev.dwell_s)}` : ""}`;
+      break;
+    }
+    case "tag_enter":
+      if (ev.from_zone) return null;          // a move: the matching tag_exit line already says it
+      text = `${ev.tool || ev.epc} arrived in ${ev.zone}${ev.user ? ` by ${ev.user}` : ""}`;
+      break;
     case "session_closed": text = `${ev.user}: ${ev.removed} removed, ${ev.returned} returned`; break;
     case "gpi_change": text = `${ev.input} ${ev.state}`; break;
     case "rule_fired": text = `${ev.rule} — ${ev.detail}`; break;
@@ -125,9 +136,13 @@ function eventRow(ev) {
     case "storage_changed": text = `Data drive ${ev.action === "eject" ? "ejected" : ev.action === "mount" ? "mounted" : "formatted"}`; break;
     default: text = JSON.stringify(ev);
   }
-  return h("li", {}, h("time", {}, time), h("span", { class: "etype " + cls }, EVENT_LABEL[ev.type] || ev.type), h("span", {}, text));
+  return h("li", {}, h("time", {}, time), h("span", { class: "etype " + cls }, label), h("span", {}, text));
 }
 
+function fmtDwell(s) {
+  s = Math.round(s);
+  return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
 function clock(hms, h24) {
   if (h24) return hms;
   const [H, M, S] = hms.split(":").map(Number);

@@ -28,10 +28,12 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb, badges, storage, accounts_api, timeloc, mqtt_link  # noqa: E402
+from core import usb, badges, storage, accounts_api, timeloc, mqtt_link, rfid  # noqa: E402
+from core.readerapi import ReaderApi, ApiError  # noqa: E402
 from core.config import Store  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
 import fake_sysfs  # noqa: E402
+import fake_impinj  # noqa: E402
 
 WWW = os.path.join(ROOT, "app", "www")
 ACCESS = Access()
@@ -126,13 +128,11 @@ class Sim:
                     self.checked_out.add(tool)
                     self.zone_counts[zone] -= 1
                     self.session["out"].append(tool)
-                    self.emit("tag_exit", zone=zone, tool=tool, user=self.session["user"])
                 elif self.checked_out:
                     tool = random.choice(sorted(self.checked_out))
                     self.checked_out.discard(tool)
                     self.zone_counts[zone] += 1
                     self.session["in"].append(tool)
-                    self.emit("tag_enter", zone=zone, tool=tool, user=self.session["user"])
             elif self.session and r < 0.65:
                 s = self.session
                 self.session = None
@@ -160,8 +160,7 @@ class Sim:
                        "timezone": timeloc.now_in(SITE["settings"]["timezone"]).strftime("%Z"),
                        "api_ok": True, "api_error": None,
                        "uptime_s": up, "ntp_synced": True, "temp_c": round(41 + random.random() * 2, 1)},
-            "rfid": {"running": True, "read_rate": self.read_rate,
-                     "tags_in_field": sum(self.zone_counts.values()), "zones": dict(self.zone_counts)},
+            "rfid": mock_rfid_brief(),
             "mqtt": mock_mqtt_brief(),
             "usb": {"drive": True, "free_mb": 28110, "badge_in": True, "badge_out": True},
             "session": self.session,
@@ -193,10 +192,36 @@ def mock_command(name, args):
         return {k: SIM.status()[k] for k in ("reader", "usb", "mqtt")}
     if name == "info":
         return mock_reader_info()
-    raise ValueError(f"unknown command '{name}' (try ping, identify, status or info)")
+    if name == "inventory":
+        action = str(args.get("action", "")).lower()
+        try:
+            if action == "start":
+                RFID.start_inventory(args.get("preset") or None)
+            elif action == "stop":
+                RFID.stop_inventory()
+            elif action != "status":
+                raise ValueError("args.action must be start, stop or status")
+        except ApiError as e:
+            raise ValueError(f"reader refused: {e}") from None
+        st = RFID.status()
+        return {k: st[k] for k in ("running", "active_preset", "tags_in_field", "read_rate", "zones")}
+    raise ValueError(f"unknown command '{name}' (try ping, identify, status, info or inventory)")
 
 
 MQTT = mqtt_link.MqttLink(mock_identity, mock_command, SIM.emit)
+
+# RFID: the real engine, talking to a simulated R700 API (dev/fake_impinj.py)
+RFID_CFG = {"revision": 0, "settings": dict(rfid.DEFAULTS, preset="crib-portal", auto_start=True,
+                                            zones={"1": "portal", "2": "drawer1", "3": "drawer2", "4": "drawer3"})}
+FAKE_IMPINJ = fake_impinj.start()
+RFID = rfid.RfidEngine(lambda: ReaderApi(FAKE_IMPINJ, "root", "impinj"), RFID_CFG["settings"], SIM.emit)
+RFID.start_threads()
+
+
+def mock_rfid_brief():
+    st = RFID.status()
+    return {k: st[k] for k in ("available", "running", "read_rate", "tags_in_field", "zones", "active_preset",
+                               "stream_connected", "reader_error")}
 
 
 def mock_mqtt_brief():
@@ -681,6 +706,13 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("system.view"):
                 self.send_json(mock_time())
             return
+        if p == "/api/rfid":
+            if self.require("rfid.view"):
+                if "refresh=1" in (url.query or "") or not RFID.presets_cache:
+                    RFID.refresh_presets(); RFID.refresh_status()
+                self.send_json({"revision": RFID_CFG["revision"], "settings": RFID_CFG["settings"],
+                                "status": RFID.status(), "presets": RFID.presets_cache})
+            return
         if p == "/api/mqtt":
             if self.require("integrations.view"):
                 with open(os.path.join(ROOT, "app", "defs", "events.json"), encoding="utf-8") as f:
@@ -761,6 +793,20 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("POST")
+        if p in ("/api/rfid/start", "/api/rfid/stop"):
+            if not self.require("rfid.edit"):
+                return
+            body = self.read_json()
+            try:
+                if p.endswith("start"):
+                    RFID.start_inventory(body.get("preset") or None)
+                else:
+                    RFID.stop_inventory()
+            except ValueError as e:
+                return self.send_json({"error": "invalid", "details": [str(e)]}, HTTPStatus.BAD_REQUEST)
+            except ApiError as e:
+                return self.send_json({"error": "reader", "details": [f"The reader refused: {e}."]}, HTTPStatus.BAD_GATEWAY)
+            return self.send_json({"ok": True, "status": RFID.status()})
         if p == "/api/mqtt/test":
             if not self.require("integrations.edit"):
                 return
@@ -838,6 +884,19 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith("/api/accounts/"):
             return self.accounts("PUT")
+        if p == "/api/rfid":
+            if not self.require("rfid.edit"):
+                return
+            body = self.read_json()
+            if body.get("revision") != RFID_CFG["revision"]:
+                return self.send_json({"error": "conflict"}, HTTPStatus.CONFLICT)
+            clean, errors = rfid.validate(body.get("settings"), RFID_CFG["settings"])
+            if errors:
+                return self.send_json({"error": "invalid", "details": errors}, HTTPStatus.BAD_REQUEST)
+            RFID_CFG["settings"] = clean
+            RFID_CFG["revision"] += 1
+            RFID.configure(clean)
+            return self.send_json({"ok": True, "revision": RFID_CFG["revision"]})
         if p == "/api/mqtt":
             if not self.require("integrations.edit"):
                 return
