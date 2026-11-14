@@ -78,6 +78,38 @@ reader's own UI is served; the UI opens it in a new tab.
 `alerts` values so far: `offline`, `usb_missing`, `outbox_backlog`. `tags_in_field` is `null`
 when the reader is offline.
 
+## USB
+
+### `GET /api/usb/devices` — needs `hardware.view`
+Every USB device from sysfs (`app/core/usb.py`), merged with the port assignments. Rows are in
+port order so hubs are followed by what's plugged into them. Assigned ports with nothing in them
+appear as `missing` rows.
+```json
+{
+  "revision": 3,
+  "devices": [{
+    "port": "1-1.1", "bus": 1, "depth": 1, "parent": "1-1",
+    "vid": "0c27", "pid": "3bfa", "manufacturer": "RFIDeas", "product": "pcProx Plus RDR-80081AKU",
+    "serial": null, "speed_mbps": "12", "max_power_ma": 100,
+    "type": "hid-keyboard", "type_label": "Keyboard (HID)",
+    "drivers": ["usbhid"], "nodes": ["/dev/input/event2", "/dev/hidraw0"],
+    "role": "badge_in", "status": "ok"
+  }],
+  "roles": [{"id": "badge_in", "label": "Badge reader (in)", "expects": ["hid-keyboard"], "single": true}],
+  "summary": {"devices": 8, "hubs": 1, "assigned": 7, "problems": 1, "unassigned": 2, "power_ma": 1264}
+}
+```
+`type`: `hub`, `hid-keyboard`, `hid`, `storage`, `serial-cdc`, `serial-usb`, `audio`, `video`, `wireless`, `vendor`, `other`.
+`status`: `ok`, `mismatch` (wrong kind of device for the role), `changed` (right kind, different
+VID:PID than when assigned), `missing`, `unassigned`, `ignored`, `hub`. Non-OK rows carry `status_detail`.
+
+### `PUT /api/usb/assignments` — needs `hardware.edit`
+`{"revision": 3, "assignments": {"1-1.1": "badge_in", "1-2": "storage"}}` — the **complete** desired
+map of port → role. The server pins each newly assigned port to the VID:PID currently in it.
+`200 {"ok": true, "revision": 4}` · `409 {"error": "conflict", "revision": 5}` if someone saved in between ·
+`400 {"error": "invalid", "details": [...]}` (bad port, unknown role, a single-use role on two ports).
+On the reader, assignments are stored in `config.json` in `rw_dir`.
+
 ## Live events
 
 ### `GET /api/events` — needs `dashboard.view`
@@ -91,10 +123,15 @@ Server-Sent Events (`text/event-stream`). Each message has `id:` (monotonic), `e
 | `session_closed` | `user`, `removed`, `returned` |
 | `gpi_change` | `input`, `state` |
 | `rule_fired` | `rule`, `detail` |
+| `usb_attached` / `usb_detached` | `port`, `product` |
 
 All events also carry `id`, `type`, `ts` (ISO 8601 local time).
 
 ## Mock only
+
+### `POST /api/dev/usb/toggle` `{"port": "1-1.2"}`
+Simulates unplugging / replugging a port (and anything behind it). `GET /api/usb/devices` also
+returns `dev_unplugged` in the mock. Not implemented by the real server.
 
 ### `POST /api/dev/role` `{"role": "supervisor"}`
 Switches the mock server's current role. Not implemented by the real server.

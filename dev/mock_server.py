@@ -18,6 +18,7 @@ import json
 import os
 import random
 import sys
+import tempfile
 import threading
 import time
 from http import HTTPStatus
@@ -27,6 +28,9 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
+from core import usb  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "dev"))
+import fake_sysfs  # noqa: E402
 
 WWW = os.path.join(ROOT, "app", "www")
 ACCESS = Access()
@@ -192,6 +196,93 @@ class Fleet:
 FLEET = Fleet()
 
 
+# ---------------------------------------------------------------- simulated USB (real scanner, fake sysfs)
+class UsbMock:
+    """Runs the real app/core/usb.py scanner against a fake sysfs tree. Unplugging is simulated by
+    rebuilding the tree without that port. Assignments live in memory here; on the reader they
+    go in config.json in rw_dir."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.root = os.path.join(tempfile.mkdtemp(prefix="meridian-sysfs-"), "sys")
+        self.unplugged = set()
+        self.revision = 1
+        self.assignments = {
+            "1-1.1": {"role": "badge_in", "vid": "0c27", "pid": "3bfa", "product": "pcProx Plus RDR-80081AKU"},
+            "1-1.2": {"role": "badge_out", "vid": "0c27", "pid": "3bfa", "product": "pcProx Plus RDR-80081AKU"},
+            "1-1.3": {"role": "io_board", "vid": "2e8a", "pid": "000a", "product": "Meridian I/O"},
+            "1-1.4": {"role": "scanner", "vid": "0c2e", "pid": "0b61", "product": "1950g"},
+            "1-1.7": {"role": "keypad", "vid": "05e0", "pid": "1200", "product": "Foot pedal"},  # not plugged in
+            "1-2":   {"role": "storage", "vid": "0781", "pid": "5581", "product": "Ultra"},
+        }
+        fake_sysfs.build(self.root)
+
+    def snapshot(self):
+        with self.lock:
+            rows = usb.evaluate(usb.scan(self.root), self.assignments)
+            rev = self.revision
+        present = [r for r in rows if r["status"] != "missing"]
+        return {
+            "revision": rev,
+            "devices": rows,
+            "roles": [{"id": k, "label": v["label"], "expects": v["expects"], "single": v["single"]}
+                      for k, v in usb.ROLES.items()],
+            "summary": {
+                "devices": sum(1 for r in present if r["type"] != "hub"),
+                "hubs": sum(1 for r in present if r["type"] == "hub"),
+                "assigned": sum(1 for r in rows if r["role"] and r["role"] != "ignore"),
+                "problems": sum(1 for r in rows if r["status"] in ("missing", "mismatch", "changed")),
+                "unassigned": sum(1 for r in rows if r["status"] == "unassigned"),
+                "power_ma": sum(r["max_power_ma"] for r in present),
+            },
+            # MOCK-ONLY: lets the page offer "plug back in" for simulated unplugs
+            "dev_unplugged": [{"port": d["port"], "product": d.get("product")}
+                              for d in fake_sysfs.R700_SETUP if d["port"] in self.unplugged],
+        }
+
+    def save(self, revision, wanted):
+        """wanted: {port: role}. VID:PID are pinned from whatever is in the port now, so a later
+        swap to a different device shows up as 'changed'."""
+        with self.lock:
+            if revision != self.revision:
+                return 409, {"error": "conflict", "revision": self.revision}
+            if not isinstance(wanted, dict):
+                return 400, {"error": "bad_request", "details": ["assignments must be an object"]}
+            current = {d["port"]: d for d in usb.scan(self.root)}
+            new = {}
+            for port, role in wanted.items():
+                if not role:
+                    continue
+                old = self.assignments.get(port)
+                if old and old["role"] == role:
+                    new[port] = old                      # unchanged: keep original pin
+                    continue
+                d = current.get(port)
+                new[port] = {"role": role, "vid": d["vid"] if d else None, "pid": d["pid"] if d else None,
+                             "product": d["product"] if d else None}
+                new[port] = {k: v for k, v in new[port].items() if v is not None}
+            errors = usb.validate_assignments(new)
+            if errors:
+                return 400, {"error": "invalid", "details": errors}
+            self.assignments = new
+            self.revision += 1
+            return 200, {"ok": True, "revision": self.revision}
+
+    def toggle(self, port):
+        with self.lock:
+            known = {d["port"]: d for d in fake_sysfs.R700_SETUP}
+            if port not in known:
+                return None
+            attached = port in self.unplugged
+            (self.unplugged.discard if attached else self.unplugged.add)(port)
+            fake_sysfs.build(self.root, fake_sysfs.without(self.unplugged))
+        SIM.emit("usb_attached" if attached else "usb_detached", port=port, product=known[port].get("product"))
+        return attached
+
+
+USB = UsbMock()
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(SimpleHTTPRequestHandler):
     server_version = "MeridianMock/0.1"
@@ -267,6 +358,10 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("site.view"):
                 self.send_json(FLEET.snapshot())
             return
+        if p == "/api/usb/devices":
+            if self.require("hardware.view"):
+                self.send_json(USB.snapshot())
+            return
         if p == "/api/events":
             if self.require("dashboard.view"):
                 self.stream_events(url)
@@ -284,6 +379,30 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json({"error": "unknown_role"}, HTTPStatus.BAD_REQUEST)
             STATE["role"] = role
             return self.send_json({"ok": True, "role": role})
+        if p == "/api/dev/usb/toggle":  # MOCK-ONLY: simulate unplugging / replugging a port
+            if not self.require("hardware.view"):
+                return
+            try:
+                port = self.read_json().get("port")
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
+            attached = USB.toggle(port)
+            if attached is None:
+                return self.send_json({"error": "unknown_port"}, HTTPStatus.BAD_REQUEST)
+            return self.send_json({"ok": True, "attached": attached})
+        return self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self):
+        p = urlparse(self.path).path
+        if p == "/api/usb/assignments":
+            if not self.require("hardware.edit"):
+                return
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
+            status, result = USB.save(body.get("revision"), body.get("assignments"))
+            return self.send_json(result, status)
         return self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
     def stream_events(self, url):

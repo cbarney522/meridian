@@ -4,6 +4,7 @@ import { api, h } from "../api.js";
 const EVENT_LABEL = {
   badge_scan: "Badge", tag_enter: "Returned", tag_exit: "Removed",
   session_closed: "Session closed", gpi_change: "Input", rule_fired: "Rule fired",
+  usb_attached: "USB attached", usb_detached: "USB removed",
 };
 const MAX_EVENTS = 40;
 
@@ -88,6 +89,7 @@ function eventRow(ev) {
     case "session_closed": text = `${ev.user}: ${ev.removed} removed, ${ev.returned} returned`; break;
     case "gpi_change": text = `${ev.input} ${ev.state}`; break;
     case "rule_fired": text = `${ev.rule} — ${ev.detail}`; break;
+    case "usb_attached": case "usb_detached": text = `${ev.product || "Device"} on port ${ev.port}`; break;
     default: text = JSON.stringify(ev);
   }
   return h("li", {}, h("time", {}, time), h("span", { class: "etype " + cls }, EVENT_LABEL[ev.type] || ev.type), h("span", {}, text));

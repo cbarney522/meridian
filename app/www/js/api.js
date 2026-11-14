@@ -27,6 +27,9 @@ export const api = {
   menu: () => request("GET", "api/menu"),
   status: () => request("GET", "api/status"),
   siteReaders: () => request("GET", "api/site/readers"),
+  usbDevices: () => request("GET", "api/usb/devices"),
+  saveUsbAssignments: (revision, assignments) => request("PUT", "api/usb/assignments", { revision, assignments }),
+  devUsbToggle: (port) => request("POST", "api/dev/usb/toggle", { port }),
   routeCheck: (route) => request("GET", "api/route-check?route=" + encodeURIComponent(route)),
   setRole: (role) => request("POST", "api/dev/role", { role }),
 };
@@ -46,5 +49,13 @@ export function h(tag, attrs = {}, ...children) {
     if (c === null || c === undefined || c === false) continue;
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
+  return el;
+}
+
+// Replace an element's children, with the same rules as h(): arrays are flattened and
+// null/undefined/false are skipped (plain replaceChildren() would print "null").
+export function fill(el, ...children) {
+  el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false)
+    .map((c) => (c instanceof Node ? c : document.createTextNode(String(c)))));
   return el;
 }

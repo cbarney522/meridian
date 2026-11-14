@@ -17,6 +17,8 @@ python3 dev/mock_server.py --host 0.0.0.0   # reachable from a tablet on your LA
 
 Python 3.8+ standard library only — nothing to install.
 
+Tests: `python3 -m unittest discover tests`
+
 From WSL, `127.0.0.1:8080` opens in your Windows browser directly. To reach it from a tablet,
 run with `--host 0.0.0.0` and forward the port from Windows
 (`netsh interface portproxy add v4tov4 listenport=8080 connectport=8080 connectaddress=<WSL IP>`),
@@ -33,6 +35,7 @@ app/                     → becomes cap/app/ in the CAP
   defs/roles.json        roles and permissions (single source of truth)
   defs/menu.json         navigation; each page names the permission it needs
   core/access.py         role/permission/menu logic shared by mock and real server
+  core/usb.py            USB discovery from sysfs + port-assignment checks (runs on the reader)
   www/                   the UI: plain HTML/CSS/JS ES modules, no build step
     index.html
     css/meridian.css
@@ -41,6 +44,8 @@ app/                     → becomes cap/app/ in the CAP
     js/api.js            API wrapper + safe DOM builder
     js/pages/*.js        one module per page
 dev/mock_server.py       simulated reader for UI development
+dev/fake_sysfs.py        builds a fake sysfs USB tree (realistic R700 setup) for the mock and tests
+tests/                   unit tests
 api.md                   the API contract the real server must implement
 ```
 

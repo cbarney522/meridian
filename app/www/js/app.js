@@ -3,11 +3,12 @@ import { api, h } from "./api.js";
 import { buildMenubar, markActive, indexMenu } from "./menu.js";
 import * as dashboard from "./pages/dashboard.js";
 import * as site from "./pages/site.js";
+import * as usbDevices from "./pages/usb-devices.js";
 import * as placeholder from "./pages/placeholder.js";
 
 // Pages that have real implementations. Everything else in the menu gets the placeholder
 // until it's built, so the whole navigation works from day one.
-const PAGES = { "/dashboard": dashboard, "/site": site };
+const PAGES = { "/dashboard": dashboard, "/site": site, "/hardware/usb": usbDevices };
 
 const $ = (id) => document.getElementById(id);
 const ctx = { session: null, menuIndex: new Map(), events: null };
@@ -22,7 +23,8 @@ class LiveFeed {
     const conn = $("conn"), label = conn.querySelector(".conn-label");
     this.es.onopen = () => { conn.className = "conn live"; label.textContent = "Live"; conn.title = "Live connection"; };
     this.es.onerror = () => { conn.className = "conn down"; label.textContent = "Reconnecting"; conn.title = "Reconnecting…"; };
-    const types = ["badge_scan", "tag_enter", "tag_exit", "session_closed", "gpi_change", "rule_fired"];
+    const types = ["badge_scan", "tag_enter", "tag_exit", "session_closed", "gpi_change", "rule_fired",
+                   "usb_attached", "usb_detached"];
     for (const t of types) this.es.addEventListener(t, (e) => {
       const ev = JSON.parse(e.data);
       this.subs.forEach((fn) => fn(ev));

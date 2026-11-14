@@ -167,3 +167,46 @@ a { color: var(--accent-strong); }
 .open { white-space: nowrap; text-align: right; }
 .open-link { text-decoration: none; font-weight: 600; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- buttons, toast, save bar ---------- */
+.btn { font: inherit; font-size: 13px; padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--line);
+       background: var(--panel); color: var(--text); cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #185d96; }
+.btn-small { padding: 2px 8px; font-size: 12px; }
+.chip.static { cursor: default; }
+.chip.static:hover { border-color: var(--line); }
+.chip.bad .chip-n { color: var(--bad); }
+
+.toast { margin-bottom: 12px; padding: 8px 14px; border-radius: var(--radius); background: #e2f4e9; color: #1d6e3e; border: 1px solid #b9e2c8; }
+.toast.bad { background: #fbe5e3; color: #9b2c24; border-color: #f1c1bc; }
+.toast[hidden] { display: none; }
+
+.savebar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; margin-top: 16px;
+           padding: 10px 16px; background: var(--bar-bg); color: var(--bar-fg); border-radius: var(--radius); box-shadow: var(--shadow); }
+.savebar[hidden] { display: none; }
+.savebar .spacer { flex: 1; }
+.savebar-err { color: #ffb4ad; }
+.savebar .btn:not(.btn-primary) { background: transparent; color: var(--bar-fg); border-color: #3a5576; }
+
+.dev-box { margin-top: 12px; padding: 8px 14px; background: #fff6dd; border: 1px solid #ecd9a3; border-radius: var(--radius);
+           color: #6b5310; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+.dev-box[hidden] { display: none; }
+
+/* ---------- USB devices ---------- */
+.mono { font-family: var(--mono); font-size: 12px; }
+.port { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+.tree { color: #a5b1bd; }
+.dev-name { font-weight: 600; }
+.type { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 12px; background: #eef2f6; color: var(--muted); white-space: nowrap; }
+.type-hid-keyboard { background: #e7f1fb; color: var(--accent-strong); }
+.type-serial-cdc, .type-serial-usb { background: #efe8fa; color: #5b3a9a; }
+.type-storage { background: #e2f4e9; color: #1d6e3e; }
+.type-hub { background: #eef2f6; color: var(--muted); }
+.role-select { font: inherit; font-size: 13px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 4px; background: #fff; max-width: 210px; }
+.row-dirty td { background: #fffbea; }
+.usb-table th { padding: 9px 12px; color: var(--muted); font-weight: 600; }
+.nowrap { white-space: nowrap; }
+.pill.neutral { background: #eef2f6; color: var(--muted); }
