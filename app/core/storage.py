@@ -62,6 +62,23 @@ def dir_size(path):
     return total
 
 
+def write_test(mount_point, subdir="meridian"):
+    """Try to create, write, fsync and delete a small file in <mount>/<subdir>.
+    Returns None if that works, else the error text. Creates <subdir> (Meridian's folder) if needed."""
+    d = os.path.join(mount_point, subdir)
+    probe = os.path.join(d, ".write_test")
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(probe, "w") as f:
+            f.write("meridian write test\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.remove(probe)
+        return None
+    except OSError as e:
+        return f"{e.strerror} ({d})"
+
+
 def warnings_for(mount, cap, alert_free_pct):
     out = []
     if mount and mount["fs_type"] != RECOMMENDED_FS:

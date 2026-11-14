@@ -110,6 +110,16 @@ class StorageTests(unittest.TestCase):
         cap = storage.capacity(d)
         self.assertGreater(cap["size"], 0)
 
+    def test_write_test(self):
+        mnt = os.path.join(self.tmp.name, "mnt")
+        os.makedirs(mnt)
+        self.assertIsNone(storage.write_test(mnt))
+        self.assertTrue(os.path.isdir(os.path.join(mnt, "meridian")))
+        self.assertEqual(os.listdir(os.path.join(mnt, "meridian")), [])      # probe file removed
+        blocker = os.path.join(self.tmp.name, "not_a_dir")
+        open(blocker, "w").close()                                          # a file where the mount should be
+        self.assertIsNotNone(storage.write_test(blocker))
+
     def test_warnings(self):
         w = storage.warnings_for({"fs_type": "vfat", "read_only": True}, {"size": 100, "free": 5}, 10)
         self.assertEqual(len(w), 3)

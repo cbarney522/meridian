@@ -68,7 +68,10 @@ export function render(root, ctx) {
             h("dt", {}, "Linux device"), h("dd", { class: "mono" }, drv.mount ? drv.mount.device : drv.node || "—"),
             h("dt", {}, "Mounted at"), h("dd", { class: "mono" }, drv.mount ? drv.mount.mount_point : "—"),
             h("dt", {}, "Filesystem"), h("dd", {}, drv.mount
-              ? h("span", { class: "pill " + (drv.mount.fs_type === "ext4" ? "ok" : "warn") }, drv.mount.fs_type) : "—"))
+              ? h("span", { class: "pill " + (drv.mount.fs_type === "ext4" ? "ok" : "warn") }, drv.mount.fs_type) : "—"),
+            h("dt", {}, "Write test"), h("dd", {}, drv.writable === undefined || drv.writable === null ? "—"
+              : h("span", { class: "pill " + (drv.writable ? "ok" : "bad"), title: drv.write_error || "" },
+                  drv.writable ? "Meridian can write" : "Not writable")))
             : h("p", { class: "muted" }, d.assigned_port ? `Expected on port ${d.assigned_port}.` : "No drive assigned.")),
         h("section", { class: "card" }, h("h2", {}, "Capacity"),
           cap ? [

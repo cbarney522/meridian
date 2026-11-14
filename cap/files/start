@@ -29,7 +29,7 @@ export PYTHONDONTWRITEBYTECODE=1    # never write .pyc into the read-only partit
   else
     echo "python:   bundled python NOT PRESENT"
   fi
-  for t in python3 openssl curl busybox bash lsusb mount; do
+  for t in python3 openssl curl busybox bash lsusb mount umount mkfs.ext4 mke2fs mkfs.vfat blkid udisksctl sync; do
     p="$(command -v "$t" 2>/dev/null)"; echo "$t: ${p:-NOT FOUND}"
   done
   echo "rw_dir writable: $( (touch "$RW/.probe" && rm -f "$RW/.probe" && echo yes) 2>/dev/null || echo NO)"
@@ -50,6 +50,10 @@ export PYTHONDONTWRITEBYTECODE=1    # never write .pyc into the read-only partit
   echo "--- block devices / mounts"
   ls -l /dev/sd* 2>&1
   grep -E '^/dev/sd' /proc/mounts 2>&1 || echo "  (no /dev/sd* mounted)"
+  for m in $(grep -E '^/dev/sd' /proc/mounts | awk '{print $2}'); do
+    if (touch "$m/.meridian_probe" && rm -f "$m/.meridian_probe") 2>/dev/null; then echo "  $m: writable by $(id -un)"
+    else echo "  $m: NOT writable by $(id -un)"; fi
+  done
   echo "--- thermal"
   cat /sys/class/thermal/thermal_zone*/temp 2>&1
 } > "$RW/diag.txt" 2>&1

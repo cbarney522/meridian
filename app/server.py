@@ -99,6 +99,7 @@ class App:
         self.sysfs = args.sysfs
         self.badges = None
         self.failed = {}            # ip -> (count, last) login throttling
+        self.write_checks = {}      # mount point -> (time, error or None); re-tested every 60 s
         self.started = time.time()
 
     def start_watchers(self):
@@ -205,6 +206,15 @@ class App:
         nodes = dev["nodes"] if dev else []
         mount = storage.find_mount(nodes, self.args.proc_mounts) if nodes else None
         cap = storage.capacity(mount["mount_point"]) if mount else None
+        write_error = None
+        if mount:
+            t, err = self.write_checks.get(mount["mount_point"], (0, None))
+            if time.time() - t > 60:
+                err = storage.write_test(mount["mount_point"])
+                self.write_checks[mount["mount_point"]] = (time.time(), err)
+                if err:
+                    log.warning("data drive not writable: %s", err)
+            write_error = err
         usage = []
         if cap:
             mdir = os.path.join(mount["mount_point"], "meridian")
@@ -217,11 +227,13 @@ class App:
             "drive": {"present": dev is not None, "port": port,
                       "product": dev["product"] if dev else None, "manufacturer": dev["manufacturer"] if dev else None,
                       "serial": dev["serial"] if dev else None, "node": nodes[0] if nodes else None,
-                      "mounted": bool(mount), "mount": mount, "capacity": cap},
+                      "mounted": bool(mount), "mount": mount, "capacity": cap,
+                      "writable": (write_error is None) if mount else None, "write_error": write_error},
             "usage": usage,
             "internal": {"path": self.args.data_dir, **internal, "buffering": not mount},
             "settings": settings,
             "warnings": storage.warnings_for(mount, cap, settings["alert_free_pct"])
+                        + ([f"Meridian can't write to the drive: {write_error}"] if write_error else [])
                         + ([] if mount or not dev else ["The drive is plugged in but not mounted. "
                                                         "Automatic mounting arrives with the engine."]),
         }
