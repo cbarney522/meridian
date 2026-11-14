@@ -353,3 +353,17 @@ While a pattern runs, `status.pattern` is `{id, name, continuous, steps, step, p
 ### Presets with a reporting interval
 
 `GET /api/rfid/preset?id=<preset>` (rfid.view) → `{id, summary: {antennas, report_interval_s, search_mode, session, power_dbm}, raw, error}`, read from `GET /api/v1/profiles/inventory/presets/{id}` (fields matched loosely). Before starting a preset or pattern, Meridian reads the presets involved. If one reports each tag only once per `reportingIntervalSeconds` (> 0), "gone after" is at least 2 × interval + 2 s while it runs (Reads to confirm arrival is never changed; confirming just takes longer) (`status.effective` shows the values in force). Starting a preset first stops any running one.
+
+## Database tables (Data › Storage › Database tables)
+
+SQLite database at `rw_dir/meridian.db` (WAL mode; survives CAP upgrades). Reference tables are defined in `app/defs/datasets.json`: `items` → `cm_items`, `bins` → `cm_bins`, `serialids` → `cm_serialids`, `rfid` → `cm_rfid` (CribMaster exports). Each import keeps the CSV's own column names (all values TEXT) and replaces the table in one transaction, so readers never see a partial table. Every import is logged in the `imports` table (rows, columns, file name, SHA-256, time, user, problems).
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/data/tables` | data.view | `{tables: [{id, label, source, description, table, loaded, rows, columns, last_import}], db_bytes}` |
+| GET | `/api/data/tables/<id>/rows?q=&offset=&limit=&sort=&desc=1` | data.view | `{columns, rows, total, matched, offset, limit}`; `q` searches every column (literal, case-insensitive); `limit` ≤ 500. |
+| POST | `/api/data/tables/<id>/preview` | data.import | Body: the CSV file as-is (`Content-Type: text/csv`, ≤ 50 MB). → `{columns, rows, sample (20 rows), problems, replaces_rows, column_changes}`. Nothing is saved. |
+| POST | `/api/data/tables/<id>/import` | data.import | Same body; optional `X-File-Name` (URI-encoded). → `{ok, rows, columns, problems, seconds}`; emits `data_imported` on the live feed. |
+| DELETE | `/api/data/tables/<id>` | data.import | Drops the table's rows (the import log is kept). |
+
+CSV handling: UTF-8 (with or without BOM), falling back to Windows-1252; delimiter is whichever of `,` `;` tab `|` is most common in the header line; blank rows skipped; short rows padded, long rows truncated (reported as problems); empty or duplicate column names renamed (reported); up to 200 columns and 500,000 rows. New permission `data.import` (Developer, Site Admin, Technician).

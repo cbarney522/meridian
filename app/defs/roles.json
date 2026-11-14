@@ -20,6 +20,7 @@
     "kiosk.edit":        "Change kiosk layout, prompts and branding",
     "sessions.manage":   "Close sessions, acknowledge alarms",
     "data.view":         "View event log and database tables",
+    "data.import":       "Import reference tables (CSV), e.g. CribMaster exports",
     "data.export":       "Export data and upload logs",
     "system.view":       "View system settings",
     "system.edit":       "Change time, location, network, certificates",
@@ -42,7 +43,7 @@
         "dashboard.view", "site.view", "rfid.view", "hardware.view", "rules.view",
         "access.view", "access.manage", "tools.view",
         "integrations.view", "integrations.edit", "kiosk.view",
-        "data.view", "data.export", "system.view", "system.edit",
+        "data.view", "data.export", "data.import", "system.view", "system.edit",
         "accounts.manage", "audit.view", "license.view", "license.manage"
       ]
     },
@@ -54,7 +55,7 @@
         "hardware.view", "hardware.edit", "io.override",
         "rules.view", "rules.edit", "access.view", "tools.view", "tools.edit",
         "integrations.view", "integrations.edit", "kiosk.view", "kiosk.edit",
-        "data.view", "data.export", "system.view", "license.view"
+        "data.view", "data.export", "data.import", "system.view", "license.view"
       ]
     },
     "supervisor": {

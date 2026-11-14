@@ -151,6 +151,19 @@
         "port": "1-1.2",
         "ts": "2026-11-14T09:02:10"
       }
+    },
+    {
+      "type": "data_imported",
+      "built": true,
+      "label": "Reference table imported",
+      "meaning": "A CSV was imported into one of the reader's database tables (e.g. CribMaster items or RFID assignments).",
+      "sample": {
+        "type": "data_imported",
+        "dataset": "rfid",
+        "rows": 1240,
+        "user": "cliff",
+        "ts": "2026-11-14T18:06:43"
+      }
     }
   ]
 }

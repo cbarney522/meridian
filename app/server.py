@@ -25,7 +25,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import CookieError, SimpleCookie
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP_DIR)
@@ -35,13 +35,14 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
-from core import accounts_api, netinfo, timeloc, mqtt_link, rfid  # noqa: E402
+from core import accounts_api, netinfo, timeloc, mqtt_link, rfid, db as dbmod  # noqa: E402
 from core.readerapi import ApiError  # noqa: E402
 from core.readerapi import ReaderApi  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
 
 WWW_DIR = os.path.join(APP_DIR, "www")
 MAX_BODY = 64 * 1024
+MAX_UPLOAD = 50 * 1024 * 1024         # CSV imports
 log = logging.getLogger("meridian")
 
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -116,6 +117,10 @@ class App:
         self.throttle = Throttle(limit=5, window=300, lockout=60)
         self.write_checks = {}      # mount point -> (time, error or None); re-tested every 60 s
         self.started = time.time()
+
+    def open_db(self):
+        defs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defs")
+        self.db = dbmod.Database(os.path.join(self.args.data_dir, "meridian.db"), dbmod.load_datasets(defs))
 
     def start_watchers(self):
         UsbWatcher(self.sysfs, self.bus.emit).start()
@@ -669,6 +674,63 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def read_upload(self):
+        """Raw request body as text (CSV uploads), up to MAX_UPLOAD."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > MAX_UPLOAD:
+            raise ValueError(f"file too large (limit {MAX_UPLOAD // (1024 * 1024)} MB)")
+        raw = self.rfile.read(n)
+        for enc in ("utf-8-sig", "cp1252"):        # Excel on Windows often saves cp1252
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("latin-1")
+
+    def data_tables(self, method, p):
+        """/api/data/tables[/<id>[/rows|/preview|/import]]"""
+        parts = p.split("/")[4:]          # ['', 'api', 'data', 'tables', ...]
+        try:
+            if method == "GET" and not parts:
+                if self.require("data.view"):
+                    self.send_json({"tables": APP.db.tables(), "db_bytes": APP.db.size_bytes()})
+                return
+            ds = parts[0]
+            action = parts[1] if len(parts) > 1 else ""
+            if method == "GET" and action == "rows":
+                if self.require("data.view"):
+                    qs = parse_qs(urlparse(self.path).query)
+                    g = lambda k, d="": (qs.get(k) or [d])[0]
+                    self.send_json(APP.db.rows(ds, q=g("q"), offset=int(g("offset", "0") or 0),
+                                               limit=int(g("limit", "50") or 50), sort=g("sort") or None,
+                                               desc=g("desc") == "1"))
+                return
+            if method == "POST" and action in ("preview", "import"):
+                if not self.require("data.import"):
+                    return
+                try:
+                    text = self.read_upload()
+                except ValueError as e:
+                    return self.send_json({"error": "invalid", "details": [str(e)]}, 413)
+                if action == "preview":
+                    return self.send_json(APP.db.preview_csv(ds, text))
+                fname = unquote(self.headers.get("X-File-Name", ""))[:200]
+                result = APP.db.import_csv(ds, text, user=self.account["user"], file_name=fname)
+                log.info("%s imported %s rows into %s from %s", self.account["user"], result["rows"], ds, fname or "upload")
+                APP.bus.emit("data_imported", dataset=ds, rows=result["rows"], user=self.account["user"])
+                return self.send_json({"ok": True, **result})
+            if method == "DELETE" and not action:
+                if not self.require("data.import"):
+                    return
+                APP.db.clear(ds)
+                log.info("%s cleared table %s", self.account["user"], ds)
+                return self.send_json({"ok": True})
+        except dbmod.DataError as e:
+            return self.send_json({"error": "invalid", "details": [str(e)]}, 400)
+        except ValueError:
+            return self.send_json({"error": "bad_request"}, 400)
+        self.send_json({"error": "not_found"}, 404)
+
     def read_json(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n > MAX_BODY:
@@ -725,6 +787,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
             return
+        if p == "/api/data/tables" or p.startswith("/api/data/tables/"):
+            return self.data_tables("GET", p)
         if p == "/api/rfid/preset":
             if self.require("rfid.view"):
                 pid = (parse_qs(urlparse(self.path).query).get("id") or [""])[0]
@@ -854,6 +918,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("POST")
+        if p.startswith("/api/data/tables/"):
+            return self.data_tables("POST", p)
         try:
             body = self.read_json()
         except (ValueError, json.JSONDecodeError):
@@ -923,6 +989,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/api/accounts/"):
             return self.accounts("DELETE")
+        if p.startswith("/api/data/tables/"):
+            return self.data_tables("DELETE", p)
         return self.send_json({"error": "not_found"}, 404)
 
     def accounts(self, method):
@@ -1025,6 +1093,7 @@ def main():
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     APP = App(args)
+    APP.open_db()
     APP.start_watchers()
     httpd = Server((args.bind, args.port), Handler)
     scheme = "http"

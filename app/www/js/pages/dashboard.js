@@ -5,7 +5,7 @@ const EVENT_LABEL = {
   badge_scan: "Badge", tag_enter: "Arrived", tag_exit: "Left",
   session_closed: "Session closed", gpi_change: "Input", rule_fired: "Rule fired",
   usb_attached: "USB attached", usb_detached: "USB removed", storage_changed: "Storage",
-  mqtt_state: "MQTT", identify: "Identify", badge_raw: "Scan",
+  mqtt_state: "MQTT", identify: "Identify", badge_raw: "Scan", data_imported: "Data",
 };
 const MAX_EVENTS = 40;
 
@@ -131,6 +131,7 @@ function eventRow(ev) {
       if (ev.result && ev.result.ok) text = `Badge ${ev.result.badge_id} on ${ev.role ? ev.role.replace("_", " ") : "port " + ev.port}`;
       else { cls = "denied"; text = `Unreadable scan on ${ev.role ? ev.role.replace("_", " ") : "port " + ev.port}${ev.result && ev.result.error ? ` (${ev.result.error})` : ""}`; }
       break;
+    case "data_imported": text = `${ev.user || "Someone"} imported ${Number(ev.rows).toLocaleString()} rows into ${ev.dataset}`; break;
     case "mqtt_state": cls = ev.connected ? "mqtt_state" : "denied"; text = ev.connected ? "Connected to the broker" : "Lost the broker connection"; break;
     case "identify": text = `Identify requested${ev.source ? " over " + ev.source.toUpperCase() : ""} (${ev.seconds} s)`; break;
     case "storage_changed": text = `Data drive ${ev.action === "eject" ? "ejected" : ev.action === "mount" ? "mounted" : "formatted"}`; break;

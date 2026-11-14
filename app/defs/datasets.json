@@ -1,0 +1,13 @@
+{
+  "_comment": "Reference tables imported into the reader's SQLite database (rw_dir/meridian.db). Each import replaces the table and keeps the source's own column names. 'table' is the SQLite table name.",
+  "datasets": [
+    {"id": "items",     "table": "cm_items",     "label": "Items",      "source": "CribMaster",
+     "description": "Item master: one row per item (part number, description, category, …)."},
+    {"id": "bins",      "table": "cm_bins",      "label": "Bins",       "source": "CribMaster",
+     "description": "Storage locations: crib, bin and the item stocked there."},
+    {"id": "serialids", "table": "cm_serialids", "label": "Serial IDs", "source": "CribMaster",
+     "description": "Serialized items: one row per individual tool, linked to its item."},
+    {"id": "rfid",      "table": "cm_rfid",      "label": "RFID",       "source": "CribMaster",
+     "description": "RFID tag assignments: EPC to serial ID or item."}
+  ]
+}

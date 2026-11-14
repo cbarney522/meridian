@@ -358,3 +358,13 @@ input[type=search] { font: 13px var(--mono); padding: 7px 10px; border: 1px soli
 .preset-line:first-child { border-top: 0; }
 .warn-text { color: #9a6700; font-weight: 600; }
 .sub-head { margin: 16px 0 4px; font-size: 13px; }
+
+/* Database tables */
+.table-scroll { overflow-x: auto; max-width: 100%; }
+.cols-list { font-size: 12px; overflow-wrap: anywhere; }
+.import-preview { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; }
+.import-preview h3 { margin: 0 0 6px; font-size: 13px; }
+.sample-table td, .data-grid td { white-space: nowrap; font-size: 12px; padding: 5px 10px; }
+.data-grid th.sortable { cursor: pointer; white-space: nowrap; }
+.browse-bar { margin: 10px 0; flex-wrap: wrap; }
+.browse-bar input[type=search] { min-width: 280px; }

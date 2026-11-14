@@ -23,12 +23,12 @@ import threading
 import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb, badges, storage, accounts_api, timeloc, mqtt_link, rfid  # noqa: E402
+from core import usb, badges, storage, accounts_api, timeloc, mqtt_link, rfid, db as dbmod  # noqa: E402
 from core.readerapi import ReaderApi, ApiError  # noqa: E402
 from core.config import Store  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
@@ -209,6 +209,10 @@ def mock_command(name, args):
 
 
 MQTT = mqtt_link.MqttLink(mock_identity, mock_command, SIM.emit)
+
+# Database: the real module, in a temporary file (CSV imports go here)
+DB = dbmod.Database(os.path.join(tempfile.mkdtemp(prefix="meridian-db-"), "meridian.db"),
+                    dbmod.load_datasets(os.path.join(ROOT, "app", "defs")))
 
 # RFID: the real engine, talking to a simulated R700 API (dev/fake_impinj.py)
 RFID_CFG = {"revision": 0, "settings": dict(rfid.DEFAULTS, preset="crib-portal", auto_start=True,
@@ -650,6 +654,48 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_json({"error": "forbidden", "needs": perm}, HTTPStatus.FORBIDDEN)
         return False
 
+    def data_tables(self, method, p):
+        parts = p.split("/")[4:]
+        try:
+            if method == "GET" and not parts:
+                if self.require("data.view"):
+                    self.send_json({"tables": DB.tables(), "db_bytes": DB.size_bytes()})
+                return
+            ds, action = parts[0], (parts[1] if len(parts) > 1 else "")
+            if method == "GET" and action == "rows":
+                if self.require("data.view"):
+                    qs = parse_qs(urlparse(self.path).query)
+                    g = lambda k, d="": (qs.get(k) or [d])[0]
+                    self.send_json(DB.rows(ds, q=g("q"), offset=int(g("offset", "0") or 0), limit=int(g("limit", "50") or 50),
+                                           sort=g("sort") or None, desc=g("desc") == "1"))
+                return
+            if method == "POST" and action in ("preview", "import"):
+                if not self.require("data.import"):
+                    return
+                n = int(self.headers.get("Content-Length") or 0)
+                if n > 50 * 1024 * 1024:
+                    return self.send_json({"error": "invalid", "details": ["file too large (limit 50 MB)"]}, 413)
+                raw = self.rfile.read(n)
+                try:
+                    text = raw.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    text = raw.decode("cp1252", "replace")
+                if action == "preview":
+                    return self.send_json(DB.preview_csv(ds, text))
+                r = DB.import_csv(ds, text, user=STATE["user"], file_name=unquote(self.headers.get("X-File-Name", ""))[:200])
+                SIM.emit("data_imported", dataset=ds, rows=r["rows"], user=STATE["user"])
+                return self.send_json({"ok": True, **r})
+            if method == "DELETE" and not action:
+                if self.require("data.import"):
+                    DB.clear(ds)
+                    self.send_json({"ok": True})
+                return
+        except dbmod.DataError as e:
+            return self.send_json({"error": "invalid", "details": [str(e)]}, HTTPStatus.BAD_REQUEST)
+        except ValueError:
+            return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
+        self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
     def read_json(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n > 64 * 1024:
@@ -706,6 +752,8 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("system.view"):
                 self.send_json(mock_time())
             return
+        if p == "/api/data/tables" or p.startswith("/api/data/tables/"):
+            return self.data_tables("GET", p)
         if p == "/api/rfid/preset":
             if self.require("rfid.view"):
                 pid = (parse_qs(url.query).get("id") or [""])[0]
@@ -792,12 +840,16 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith("/api/accounts/"):
             return self.accounts("DELETE")
+        if p.startswith("/api/data/tables/"):
+            return self.data_tables("DELETE", p)
         return self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
         p = urlparse(self.path).path
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("POST")
+        if p.startswith("/api/data/tables/"):
+            return self.data_tables("POST", p)
         if p in ("/api/rfid/start", "/api/rfid/stop"):
             if not self.require("rfid.edit"):
                 return

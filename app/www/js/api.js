@@ -9,9 +9,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, raw) {
   const opts = { method, headers: { Accept: "application/json" }, credentials: "same-origin" };
-  if (body !== undefined) {
+  if (raw) {                                  // file upload: send the file as-is
+    opts.headers["Content-Type"] = raw.type || "text/csv";
+    if (raw.name) opts.headers["X-File-Name"] = encodeURIComponent(raw.name);
+    opts.body = raw.body;
+  } else if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
@@ -43,6 +47,11 @@ export const api = {
   readerInfo: () => request("GET", "api/reader/info"),
   time: () => request("GET", "api/time"),
   mqtt: () => request("GET", "api/mqtt"),
+  dataTables: () => request("GET", "api/data/tables"),
+  dataRows: (id, params) => request("GET", `api/data/tables/${encodeURIComponent(id)}/rows?` + new URLSearchParams(params)),
+  dataPreview: (id, file) => request("POST", `api/data/tables/${encodeURIComponent(id)}/preview`, undefined, { body: file, name: file.name, type: "text/csv" }),
+  dataImport: (id, file) => request("POST", `api/data/tables/${encodeURIComponent(id)}/import`, undefined, { body: file, name: file.name, type: "text/csv" }),
+  dataClear: (id) => request("DELETE", `api/data/tables/${encodeURIComponent(id)}`),
   rfid: (refresh) => request("GET", "api/rfid" + (refresh ? "?refresh=1" : "")),
   saveRfid: (revision, settings) => request("PUT", "api/rfid", { revision, settings }),
   rfidStart: (preset) => request("POST", "api/rfid/start", { preset }),
