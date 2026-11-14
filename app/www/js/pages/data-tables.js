@@ -10,8 +10,8 @@ export function render(root, ctx) {
   const msg = toast();
   const summary = h("p", { class: "subtitle" });
   const list = h("div", { class: "grid grid-2" });
-  const browser = h("section", { class: "card full", hidden: true });
-  const state = { tables: [], previews: {}, busy: {}, browse: null };
+  const browser = h("section", { class: "card full" });
+  const state = { tables: [], previews: {}, busy: {} };
 
   root.append(
     h("h1", {}, "Database tables"),
@@ -51,7 +51,7 @@ export function render(root, ctx) {
       h("div", { class: "actions", style: { marginTop: "12px" } },
         canImport ? [file, h("button", { type: "button", class: "btn btn-primary", disabled: busy, onclick: () => file.click() },
           busy || (t.loaded ? "Replace with CSV…" : "Import CSV…"))] : null,
-        t.loaded ? h("button", { type: "button", class: "btn", onclick: () => openBrowser(t.id) }, "Browse") : null,
+        t.loaded ? h("button", { type: "button", class: "btn", onclick: () => openExplorer(t.table, true) }, "Browse") : null,
         t.loaded && canImport ? h("button", { type: "button", class: "btn", onclick: () => clearTable(t) }, "Clear") : null));
   }
 
@@ -91,7 +91,8 @@ export function render(root, ctx) {
       msg.show(`${t.label}: imported ${r.rows.toLocaleString()} rows in ${r.seconds} s.`);
       delete state.previews[t.id];
       await load();
-      if (state.browse && state.browse.id === t.id) openBrowser(t.id);
+      await loadObjects();
+      if (ex.name === t.table) openExplorer(t.table);
     } catch (err) { msg.show(`${t.label}: ${errText(err)}`, true); }
     finally { delete state.busy[t.id]; draw(); }
   }
@@ -101,58 +102,172 @@ export function render(root, ctx) {
     try {
       await api.dataClear(t.id);
       msg.show(`${t.label} cleared.`);
-      if (state.browse && state.browse.id === t.id) { state.browse = null; browser.hidden = true; }
       await load();
+      await loadObjects();
+      if (ex.name === t.table) openExplorer(t.table);
     } catch (err) { msg.show(errText(err), true); }
   }
 
-  // ---------- browser
-  function openBrowser(id) {
-    state.browse = { id, q: "", offset: 0, sort: "", desc: false };
-    browser.hidden = false;
-    buildBrowser();
-    loadRows();
-    browser.scrollIntoView({ behavior: "smooth", block: "start" });
+  // ---------- SQLite explorer (every table and view; Data / Schema tabs; SQL console for developers)
+  const canQuery = ctx.session.permissions.includes("dev.tools");
+  const canExport = ctx.session.permissions.includes("data.export");
+  const ex = { name: null, tab: "data", q: "", offset: 0, sort: "", desc: false, objects: [] };
+  const exList = h("div", { class: "ex-list" });
+  const exInfo = h("p", { class: "muted ex-info" });
+  const exPanel = h("div", { class: "ex-panel" }, h("p", { class: "muted" }, "Choose a table on the left."));
+  const integrityOut = h("span");
+  const integrityBtn = h("button", { type: "button", class: "btn btn-small" }, "Check integrity");
+  integrityBtn.addEventListener("click", async () => {
+    fill(integrityOut, h("span", { class: "muted" }, " Checking…"));
+    try {
+      const r = await api.sqliteIntegrity();
+      fill(integrityOut, r.ok ? h("span", { class: "pill ok" }, "Database OK") : h("span", { class: "pill bad", title: r.messages.join("\n") }, "Problems found"));
+    } catch (err) { fill(integrityOut, h("span", { class: "bad-text" }, errText(err))); }
+  });
+  browser.hidden = false;
+  fill(browser,
+    h("div", { class: "card-head" }, h("h2", {}, "SQLite explorer"),
+      h("div", { class: "actions" }, integrityBtn, integrityOut)),
+    exInfo,
+    h("div", { class: "ex-layout" }, exList, exPanel),
+    canQuery ? sqlConsole() : null);
+
+  async function loadObjects() {
+    try {
+      const d = await api.sqliteObjects();
+      ex.objects = d.objects;
+      const db = d.db;
+      exInfo.textContent = `SQLite ${db.sqlite_version} · ${fmtBytes(db.bytes)} · journal ${db.journal_mode} · ${d.objects.length} tables/views`;
+      drawList();
+    } catch (err) { fill(exList, h("div", { class: "notice bad" }, errText(err))); }
   }
 
-  const br = {};
-  function buildBrowser() {
-    const b = state.browse, t = state.tables.find((x) => x.id === b.id);
-    br.search = h("input", { type: "search", placeholder: "Search all columns…", "aria-label": "Search rows" });
+  function drawList() {
+    const groups = [["import", "Imported"], ["derived", "Meridian"], ["system", "System"]];
+    fill(exList, groups.map(([kind, label]) => {
+      const items = ex.objects.filter((o) => o.kind === kind);
+      return items.length ? [h("div", { class: "ex-group" }, label), items.map((o) => {
+        const b = h("button", { type: "button", class: "ex-item" + (ex.name === o.name ? " on" : "") },
+          h("span", { class: "mono" }, o.name), o.type === "view" ? h("span", { class: "muted" }, " view") : null,
+          h("span", { class: "ex-n" }, o.rows === null ? "?" : o.rows.toLocaleString()));
+        b.addEventListener("click", () => openExplorer(o.name));
+        return b;
+      })] : null;
+    }));
+  }
+
+  function openExplorer(name, scroll = false) {
+    Object.assign(ex, { name, tab: "data", q: "", offset: 0, sort: "", desc: false });
+    drawList();
+    buildPanel();
+    if (scroll) browser.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  const ep = {};
+  function buildPanel() {
+    const tabBtn = (id, label) => {
+      const b = h("button", { type: "button", class: "tab" + (ex.tab === id ? " on" : "") }, label);
+      b.addEventListener("click", () => { ex.tab = id; buildPanel(); });
+      return b;
+    };
+    ep.body = h("div");
+    fill(exPanel,
+      h("div", { class: "ex-head" }, h("b", { class: "mono" }, ex.name),
+        h("div", { class: "tabs" }, tabBtn("data", "Data"), tabBtn("schema", "Schema")),
+        canExport ? h("a", { class: "btn btn-small", href: api.sqliteExportUrl(ex.name), download: `${ex.name}.csv` }, "Download CSV") : null),
+      ep.body);
+    if (ex.tab === "data") buildData(); else loadSchema();
+  }
+
+  function buildData() {
+    ep.search = h("input", { type: "search", placeholder: "Search all columns…", "aria-label": "Search rows", value: ex.q });
     let timer;
-    br.search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { b.q = br.search.value.trim(); b.offset = 0; loadRows(); }, 300); });
-    br.info = h("span", { class: "muted" });
-    br.prev = h("button", { type: "button", class: "btn btn-small", onclick: () => { b.offset = Math.max(0, b.offset - PAGE); loadRows(); } }, "‹ Previous");
-    br.next = h("button", { type: "button", class: "btn btn-small", onclick: () => { b.offset += PAGE; loadRows(); } }, "Next ›");
-    br.table = h("div", { class: "table-scroll" });
-    fill(browser,
-      h("div", { class: "card-head" }, h("h2", {}, `Browse: ${t ? t.label : b.id}`),
-        h("button", { type: "button", class: "btn btn-small", onclick: () => { state.browse = null; browser.hidden = true; } }, "Close")),
-      h("div", { class: "actions browse-bar" }, br.search, br.prev, br.next, br.info),
-      br.table);
+    ep.search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { ex.q = ep.search.value.trim(); ex.offset = 0; loadRows(); }, 300); });
+    ep.info = h("span", { class: "muted" });
+    ep.prev = h("button", { type: "button", class: "btn btn-small", onclick: () => { ex.offset = Math.max(0, ex.offset - PAGE); loadRows(); } }, "‹ Previous");
+    ep.next = h("button", { type: "button", class: "btn btn-small", onclick: () => { ex.offset += PAGE; loadRows(); } }, "Next ›");
+    ep.table = h("div", { class: "table-scroll" });
+    fill(ep.body, h("div", { class: "actions browse-bar" }, ep.search, ep.prev, ep.next, ep.info), ep.table);
+    loadRows();
   }
 
   async function loadRows() {
-    const b = state.browse;
-    if (!b) return;
     try {
-      const d = await api.dataRows(b.id, { q: b.q, offset: b.offset, limit: PAGE, sort: b.sort, desc: b.desc ? "1" : "0" });
+      const d = await api.sqliteRows(ex.name, { q: ex.q, offset: ex.offset, limit: PAGE, sort: ex.sort, desc: ex.desc ? "1" : "0" });
       const end = Math.min(d.offset + d.rows.length, d.matched);
-      br.info.textContent = d.matched ? `${(d.offset + 1).toLocaleString()}–${end.toLocaleString()} of ${d.matched.toLocaleString()}`
-        + (b.q ? ` matching (${d.total.toLocaleString()} rows in all)` : "") : (b.q ? "No rows match." : "No rows.");
-      br.prev.disabled = d.offset === 0;
-      br.next.disabled = end >= d.matched;
-      fill(br.table, h("table", { class: "table simple data-grid" },
-        h("thead", {}, h("tr", {}, d.columns.map((c) => {
-          const th = h("th", { class: "sortable", title: "Sort" }, c, b.sort === c ? (b.desc ? " ▼" : " ▲") : "");
-          th.addEventListener("click", () => { b.desc = b.sort === c ? !b.desc : false; b.sort = c; b.offset = 0; loadRows(); });
-          return th;
-        }))),
-        h("tbody", {}, d.rows.map((r) => h("tr", {}, r.map((v) => h("td", {}, v ?? "")))))));
-    } catch (err) { fill(br.table, h("div", { class: "notice bad" }, errText(err))); }
+      ep.info.textContent = d.matched ? `${(d.offset + 1).toLocaleString()}–${end.toLocaleString()} of ${d.matched.toLocaleString()}`
+        + (ex.q ? ` matching (${d.total.toLocaleString()} rows in all)` : "") : (ex.q ? "No rows match." : "No rows.");
+      ep.prev.disabled = d.offset === 0;
+      ep.next.disabled = end >= d.matched;
+      fill(ep.table, grid(d.columns, d.rows, (c) => { ex.desc = ex.sort === c ? !ex.desc : false; ex.sort = c; ex.offset = 0; loadRows(); }, ex.sort, ex.desc));
+    } catch (err) { fill(ep.table, h("div", { class: "notice bad" }, errText(err))); }
+  }
+
+  async function loadSchema() {
+    fill(ep.body, h("p", { class: "muted" }, "Loading…"));
+    try {
+      const s = await api.sqliteSchema(ex.name);
+      fill(ep.body,
+        h("table", { class: "table simple" },
+          h("thead", {}, h("tr", {}, ["#", "Column", "Type", "Not null", "Default", "Primary key"].map((x) => h("th", {}, x)))),
+          h("tbody", {}, s.columns.map((c) => h("tr", {},
+            h("td", {}, String(c.cid)), h("td", { class: "mono" }, c.name), h("td", {}, c.type || "—"),
+            h("td", {}, c.notnull ? "yes" : ""), h("td", { class: "mono" }, c.default ?? ""), h("td", {}, c.pk ? String(c.pk) : ""))))),
+        h("h3", { class: "sub-head" }, "Indexes"),
+        s.indexes.length ? h("table", { class: "table simple" },
+          h("thead", {}, h("tr", {}, ["Name", "Columns", "Unique"].map((x) => h("th", {}, x)))),
+          h("tbody", {}, s.indexes.map((i) => h("tr", {}, h("td", { class: "mono" }, i.name), h("td", { class: "mono" }, i.columns.join(", ")), h("td", {}, i.unique ? "yes" : "")))))
+          : h("p", { class: "muted" }, "No indexes."),
+        h("h3", { class: "sub-head" }, "Definition"),
+        h("pre", { class: "mono sample" }, s.sql || "(none)"));
+    } catch (err) { fill(ep.body, h("div", { class: "notice bad" }, errText(err))); }
+  }
+
+  function sqlConsole() {
+    const ta = h("textarea", { class: "mono sql-input", rows: 6, spellcheck: "false", "aria-label": "SQL query",
+      placeholder: "SELECT * FROM cm_items LIMIT 20" });
+    try { ta.value = sessionStorage.getItem("meridian.sql") || ""; } catch { /* storage unavailable */ }
+    const out = h("div");
+    const run = h("button", { type: "button", class: "btn btn-primary" }, "Run");
+    const exec = async () => {
+      try { sessionStorage.setItem("meridian.sql", ta.value); } catch { /* ignore */ }
+      fill(out, h("p", { class: "muted" }, "Running…"));
+      run.disabled = true;
+      try {
+        const r = await api.sqliteQuery(ta.value);
+        fill(out,
+          h("p", { class: "muted" }, `${r.row_count.toLocaleString()} row${r.row_count === 1 ? "" : "s"} in ${r.ms} ms`,
+            r.truncated ? ` (showing the first ${r.max_rows.toLocaleString()}; add LIMIT or WHERE)` : ""),
+          r.columns.length ? h("div", { class: "table-scroll" }, grid(r.columns, r.rows)) : null);
+      } catch (err) { fill(out, h("div", { class: "notice bad" }, errText(err))); }
+      finally { run.disabled = false; }
+    };
+    run.addEventListener("click", exec);
+    ta.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); exec(); } });
+    const examples = [
+      ["Tables", "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name"],
+      ["Import log", "SELECT dataset, rows, file_name, datetime(imported_at, 'unixepoch', 'localtime') AS imported, imported_by FROM imports ORDER BY id DESC"],
+      ["Columns of a table", "PRAGMA table_info(cm_items)"]];
+    return h("div", { class: "sql-console" },
+      h("h3", { class: "sub-head" }, "SQL console"),
+      h("p", { class: "hint" }, "Read-only: SELECT, WITH, EXPLAIN and informational PRAGMAs, one statement at a time; up to 1,000 rows and 5 seconds. ",
+        "Ctrl+Enter runs. Examples: ",
+        examples.map(([label, sql], i) => [i ? " · " : "", h("a", { href: "#", onclick: (e) => { e.preventDefault(); ta.value = sql; ta.focus(); } }, label)]).flat()),
+      ta, h("div", { class: "actions", style: { marginTop: "8px" } }, run), out);
+  }
+
+  function grid(cols, rows, onSort, sort, desc) {
+    return h("table", { class: "table simple data-grid" },
+      h("thead", {}, h("tr", {}, cols.map((c) => {
+        const th = h("th", { class: onSort ? "sortable" : null }, c, sort === c ? (desc ? " ▼" : " ▲") : "");
+        if (onSort) th.addEventListener("click", () => onSort(c));
+        return th;
+      }))),
+      h("tbody", {}, rows.map((r) => h("tr", {}, r.map((v) => h("td", { class: v === null ? "null" : null }, v === null ? "NULL" : String(v)))))));
   }
 
   load();
+  loadObjects();
   return () => msg.dispose();
 }
 

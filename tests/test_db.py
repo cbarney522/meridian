@@ -81,6 +81,48 @@ class DatabaseTests(unittest.TestCase):
         stop.set(); t.join()
         self.assertTrue(seen <= {2000, 50000}, seen)
 
+    def test_explorer(self):
+        self.db.import_csv("items", ITEMS)
+        self.db.import_csv("rfid", "EPC,ItemNumber\nE2801,TW-100\nE2802,DR-200\n")
+        obj = {o["name"]: o for o in self.db.objects()["objects"]}
+        self.assertEqual(obj["cm_items"]["kind"], "import")
+        self.assertEqual(obj["imports"]["kind"], "system")
+        self.assertEqual(obj["cm_rfid"]["rows"], 2)
+        sch = self.db.schema("cm_items")
+        self.assertEqual([c["name"] for c in sch["columns"]], ["ItemNumber", "Description", "ItemClass"])
+        self.assertIn("CREATE TABLE", sch["sql"])
+        self.assertEqual(self.db.table_rows("imports")["total"], 2)
+        r = self.db.query("SELECT r.EPC, i.Description FROM cm_rfid r JOIN cm_items i ON i.ItemNumber = r.ItemNumber ORDER BY r.EPC")
+        self.assertEqual(r["columns"], ["EPC", "Description"])
+        self.assertEqual(r["rows"][1], ["E2802", "Drill, cordless"])
+        self.assertEqual(self.db.query("WITH x AS (SELECT 1 AS n) SELECT n FROM x;")["rows"], [[1]])
+        self.assertEqual(self.db.query("PRAGMA table_info(cm_items)")["row_count"], 3)
+        big = self.db.query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 5000) SELECT i FROM n", max_rows=100)
+        self.assertTrue(big["truncated"]); self.assertEqual(big["row_count"], 100)
+        csvtext = "".join(self.db.export_csv("cm_items"))
+        self.assertTrue(csvtext.startswith("ItemNumber,Description,ItemClass\r\n"))
+        self.assertIn('"Drill, cordless"', csvtext)
+        self.assertTrue(self.db.integrity()["ok"])
+
+    def test_query_is_read_only(self):
+        self.db.import_csv("items", ITEMS)
+        for bad in ("DELETE FROM cm_items", "DROP TABLE cm_items", "UPDATE cm_items SET ItemClass='x'",
+                    "INSERT INTO cm_items VALUES (1,2,3)", "SELECT 1; DROP TABLE cm_items",
+                    "ATTACH DATABASE '/tmp/x.db' AS x", "PRAGMA journal_mode=DELETE", "PRAGMA writable_schema=ON",
+                    "VACUUM", "", "   ;  "):
+            with self.assertRaises(dbmod.DataError, msg=bad):
+                self.db.query(bad)
+        # sneaky: a write disguised as a CTE is stopped by the read-only connection itself
+        with self.assertRaises(dbmod.DataError):
+            self.db.query("WITH x AS (SELECT 1) DELETE FROM cm_items")
+        self.assertEqual(self.db.table_rows("cm_items")["total"], 2)
+        # a semicolon inside a string is fine
+        self.assertEqual(self.db.query("SELECT 'a;b' AS s")["rows"], [["a;b"]])
+        # runaway queries stop at the time limit
+        with self.assertRaises(dbmod.DataError) as cm:
+            self.db.query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n) SELECT count(*) FROM n", timeout_s=0.5)
+        self.assertIn("Stopped", str(cm.exception))
+
     def test_unknown_dataset(self):
         with self.assertRaises(dbmod.DataError):
             self.db.import_csv("nope", ITEMS)

@@ -15,6 +15,7 @@ with proper authentication; everything else here should carry over.
 import argparse
 import collections
 import json
+import logging
 import os
 import random
 import sys
@@ -25,6 +26,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+log = logging.getLogger("meridian.mock")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
@@ -696,6 +698,62 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": "bad_request"}, HTTPStatus.BAD_REQUEST)
         self.send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
+    def sqlite_api(self, method, p, DB, user, emit=None):
+        """/api/data/sqlite[/<table>/(rows|schema|export.csv)] and POST /api/data/sqlite/(query|integrity)"""
+        parts = [unquote(x) for x in p.split("/")[4:]]
+        try:
+            if method == "GET" and not parts:
+                if self.require("data.view"):
+                    self.send_json(DB.objects())
+                return
+            if method == "POST" and parts == ["query"]:
+                if not self.require("dev.tools"):
+                    return
+                body = self.read_json()
+                r = DB.query(body.get("sql", ""))
+                log.info("%s ran SQL: %s", user, (body.get("sql") or "").strip()[:200].replace("\n", " "))
+                return self.send_json(r)
+            if method == "POST" and parts == ["integrity"]:
+                if self.require("data.view"):
+                    self.send_json(DB.integrity())
+                return
+            if method == "GET" and len(parts) == 2:
+                name, action = parts
+                if action == "rows":
+                    if self.require("data.view"):
+                        qs = parse_qs(urlparse(self.path).query)
+                        g = lambda k, d="": (qs.get(k) or [d])[0]
+                        self.send_json(DB.table_rows(name, q=g("q"), offset=int(g("offset", "0") or 0),
+                                                     limit=int(g("limit", "50") or 50), sort=g("sort") or None,
+                                                     desc=g("desc") == "1"))
+                    return
+                if action == "schema":
+                    if self.require("data.view"):
+                        self.send_json(DB.schema(name))
+                    return
+                if action == "export.csv":
+                    if not self.require("data.export"):
+                        return
+                    chunks = DB.export_csv(name)
+                    first = next(chunks)              # raises DataError before headers are sent
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/csv; charset=utf-8")
+                    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in name)
+                    self.send_header("Content-Disposition", f'attachment; filename="{safe}.csv"')
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.close_connection = True
+                    self.wfile.write(("\ufeff" + first).encode("utf-8"))    # BOM so Excel reads UTF-8
+                    for ch in chunks:
+                        self.wfile.write(ch.encode("utf-8"))
+                    log.info("%s exported table %s", user, name)
+                    return
+        except dbmod.DataError as e:
+            return self.send_json({"error": "invalid", "details": [str(e)]}, HTTPStatus.BAD_REQUEST)
+        except (ValueError, json.JSONDecodeError):
+            return self.send_json({"error": "bad_request"}, 400)
+        self.send_json({"error": "not_found"}, 404)
+
     def read_json(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n > 64 * 1024:
@@ -754,6 +812,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if p == "/api/data/tables" or p.startswith("/api/data/tables/"):
             return self.data_tables("GET", p)
+        if p == "/api/data/sqlite" or p.startswith("/api/data/sqlite/"):
+            return self.sqlite_api("GET", p, DB, STATE["user"])
         if p == "/api/rfid/preset":
             if self.require("rfid.view"):
                 pid = (parse_qs(url.query).get("id") or [""])[0]
@@ -850,6 +910,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.accounts("POST")
         if p.startswith("/api/data/tables/"):
             return self.data_tables("POST", p)
+        if p.startswith("/api/data/sqlite/"):
+            return self.sqlite_api("POST", p, DB, STATE["user"])
         if p in ("/api/rfid/start", "/api/rfid/stop"):
             if not self.require("rfid.edit"):
                 return

@@ -367,3 +367,14 @@ SQLite database at `rw_dir/meridian.db` (WAL mode; survives CAP upgrades). Refer
 | DELETE | `/api/data/tables/<id>` | data.import | Drops the table's rows (the import log is kept). |
 
 CSV handling: UTF-8 (with or without BOM), falling back to Windows-1252; delimiter is whichever of `,` `;` tab `|` is most common in the header line; blank rows skipped; short rows padded, long rows truncated (reported as problems); empty or duplicate column names renamed (reported); up to 200 columns and 500,000 rows. New permission `data.import` (Developer, Site Admin, Technician).
+
+### SQLite explorer
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/data/sqlite` | data.view | `{objects: [{name, type (table/view), rows, columns, kind (import/derived/system), dataset}], db: {sqlite_version, journal_mode, page_size, page_count, schema_version, bytes, path}}` |
+| GET | `/api/data/sqlite/<name>/rows?q=&offset=&limit=&sort=&desc=1` | data.view | Browse any table or view (same shape as dataset rows). |
+| GET | `/api/data/sqlite/<name>/schema` | data.view | `{name, type, sql, columns: [{cid, name, type, notnull, default, pk}], indexes: [{name, unique, columns, origin, sql}]}` |
+| GET | `/api/data/sqlite/<name>/export.csv` | data.export | Whole table as CSV (UTF-8 with BOM, CRLF), streamed. |
+| POST | `/api/data/sqlite/query` | dev.tools | `{sql}` → `{columns, rows, row_count, truncated, max_rows, ms}`. One statement; must start with SELECT, WITH, EXPLAIN, VALUES or an informational PRAGMA; runs on a separate read-only connection (`mode=ro`, `query_only`), max 1,000 rows, stopped after 5 s. Every query is logged. |
+| POST | `/api/data/sqlite/integrity` | data.view | `PRAGMA integrity_check` → `{ok, messages}` |

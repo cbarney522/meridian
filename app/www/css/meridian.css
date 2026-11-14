@@ -368,3 +368,23 @@ input[type=search] { font: 13px var(--mono); padding: 7px 10px; border: 1px soli
 .data-grid th.sortable { cursor: pointer; white-space: nowrap; }
 .browse-bar { margin: 10px 0; flex-wrap: wrap; }
 .browse-bar input[type=search] { min-width: 280px; }
+
+/* SQLite explorer */
+.ex-info { margin: 0 0 10px; }
+.ex-layout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+.ex-list { border: 1px solid var(--line); border-radius: 6px; padding: 6px; max-height: 520px; overflow: auto; }
+.ex-group { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 8px 6px 4px; }
+.ex-item { display: flex; width: 100%; align-items: baseline; gap: 4px; border: 0; background: none; text-align: left; padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.ex-item:hover { background: #f1f4f8; }
+.ex-item.on { background: #e5eefb; }
+.ex-item .ex-n { margin-left: auto; color: var(--muted); font-size: 12px; }
+.ex-panel { min-width: 0; }
+.ex-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; }
+.tab { border: 1px solid var(--line); background: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.tab.on { background: var(--ink, #10203a); color: #fff; border-color: transparent; }
+.data-grid td.null { color: var(--muted); font-style: italic; }
+.sql-console { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 4px; }
+.sql-input { width: 100%; box-sizing: border-box; font: 13px var(--mono); padding: 8px; border: 1px solid var(--line); border-radius: 4px; resize: vertical; }
+@media (max-width: 900px) { .ex-layout { grid-template-columns: 1fr; } }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }
