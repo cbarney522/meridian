@@ -39,6 +39,11 @@ TYPE_LABELS = {
     "video": "Camera", "wireless": "Wireless", "vendor": "Vendor-specific", "other": "Other",
 }
 
+# The R700 v2's three rear USB ports hang off an internal TI hub (verified on hardware, FW 10.4).
+R700_INTERNAL_HUB = ("1-1", "0451", "8142")
+R700_PORTS = {"1-1": "R700 internal hub", "1-1.1": "Reader USB left",
+              "1-1.2": "Reader USB middle", "1-1.3": "Reader USB right"}
+
 SERIAL_DRIVERS = {"ftdi_sio", "cp210x", "ch341", "pl2303", "cdc_acm", "usbserial_generic"}
 
 
@@ -159,7 +164,31 @@ def scan(sys_root="/sys"):
             "nodes": nodes.get(name, []),
         })
     devices.sort(key=lambda d: _port_key(d["port"]))
+    _label(devices)
     return devices
+
+
+def location_for(port, is_r700):
+    """Human label for where a port physically is: 'Reader USB left', or 'via Reader USB left'
+    for anything plugged in behind it. None if the reader layout isn't recognised."""
+    if not is_r700:
+        return None
+    if port in R700_PORTS:
+        return R700_PORTS[port]
+    for top in ("1-1.1", "1-1.2", "1-1.3"):
+        if port.startswith(top + "."):
+            return "via " + R700_PORTS[top]
+    return None
+
+
+def _label(devices):
+    port, vid, pid = R700_INTERNAL_HUB
+    is_r700 = any(d["port"] == port and d["vid"] == vid and d["pid"] == pid for d in devices)
+    for d in devices:
+        d["location"] = location_for(d["port"], is_r700)
+        if is_r700 and d["port"] == port and not d["product"]:
+            d["product"] = "R700 internal USB hub"
+    return is_r700
 
 
 def validate_assignments(assignments):
@@ -199,6 +228,7 @@ def evaluate(devices, assignments):
     """
     rows = []
     present = {d["port"] for d in devices}
+    is_r700 = _label(devices)
     for d in devices:
         a = assignments.get(d["port"])
         row = dict(d, role=a["role"] if a else None)
@@ -226,6 +256,7 @@ def evaluate(devices, assignments):
                          "vid": a.get("vid"), "pid": a.get("pid"), "product": a.get("product"),
                          "manufacturer": None, "serial": None, "speed_mbps": None, "max_power_ma": 0,
                          "type": None, "type_label": None, "drivers": [], "nodes": [],
+                         "location": location_for(port, is_r700),
                          "role": a["role"], "status": "missing",
                          "status_detail": "Assigned device not detected"})
     rows.sort(key=lambda r: _port_key(r["port"]))

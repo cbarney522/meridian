@@ -9,34 +9,42 @@ import shutil
 
 HOST = "devices/platform/soc/xhci-hcd.0.auto"
 
-# A realistic crib setup: 7-port hub on reader port 1, data drive on port 2, GPS on port 3.
+# Mirrors a real R700 v2 (verified on hardware, FW 10.4): the reader's three rear USB ports hang off an
+# internal TI hub at 1-1 — left = 1-1.1, middle = 1-1.2, right = 1-1.3. A "7-port" hub is two 4-port
+# chips chained (second chip on the first chip's port 4), so its sockets show up as 1-1.1.1..3 and
+# 1-1.1.4.1..4. Setup: 7-port hub on the left port, data drive in the middle, GPS on the right.
+HUB4 = {"vid": "0bda", "pid": "5411", "manufacturer": "Generic", "product": "4-Port USB 2.0 Hub",
+        "speed": "480", "power": "0mA", "dev_class": "09",
+        "interfaces": [{"class": "09", "sub": "00", "proto": "02", "driver": "hub"}]}
 R700_SETUP = [
-    {"port": "1-1", "vid": "1a40", "pid": "0201", "manufacturer": None, "product": "USB 2.0 Hub [MTT]",
-     "speed": "480", "power": "100mA", "dev_class": "09",
+    {"port": "1-1", "vid": "0451", "pid": "8142", "manufacturer": None, "product": None, "serial": "EE0B0861696D",
+     "speed": "480", "power": "0mA", "dev_class": "09",
      "interfaces": [{"class": "09", "sub": "00", "proto": "02", "driver": "hub"}]},
-    {"port": "1-1.1", "vid": "0c27", "pid": "3bfa", "manufacturer": "RFIDeas", "product": "pcProx Plus RDR-80081AKU",
+    dict(HUB4, port="1-1.1"),
+    dict(HUB4, port="1-1.1.4"),
+    {"port": "1-1.1.1", "vid": "0c27", "pid": "3bfa", "manufacturer": "RFIDeas", "product": "pcProx Plus RDR-80081AKU",
      "speed": "12", "power": "100mA",
      "interfaces": [{"class": "03", "sub": "01", "proto": "01", "driver": "usbhid", "nodes": [("input", "event2"), ("hidraw", "hidraw0")]}]},
-    {"port": "1-1.2", "vid": "0c27", "pid": "3bfa", "manufacturer": "RFIDeas", "product": "pcProx Plus RDR-80081AKU",
+    {"port": "1-1.1.2", "vid": "0c27", "pid": "3bfa", "manufacturer": "RFIDeas", "product": "pcProx Plus RDR-80081AKU",
      "speed": "12", "power": "100mA",
      "interfaces": [{"class": "03", "sub": "01", "proto": "01", "driver": "usbhid", "nodes": [("input", "event3"), ("hidraw", "hidraw1")]}]},
-    {"port": "1-1.3", "vid": "2e8a", "pid": "000a", "manufacturer": "Meridian Sensor Group", "product": "Meridian I/O",
+    {"port": "1-1.1.3", "vid": "2e8a", "pid": "000a", "manufacturer": "Meridian Sensor Group", "product": "Meridian I/O",
      "serial": "E6614C311B7A3F2C", "speed": "12", "power": "100mA", "dev_class": "ef",
      "interfaces": [{"class": "02", "sub": "02", "proto": "00", "driver": "cdc_acm", "nodes": [("tty", "ttyACM0")]},
                     {"class": "0a", "sub": "00", "proto": "00", "driver": "cdc_acm"}]},
-    {"port": "1-1.4", "vid": "0c2e", "pid": "0b61", "manufacturer": "Honeywell Imaging & Mobility", "product": "1950g",
+    {"port": "1-1.1.4.1", "vid": "0c2e", "pid": "0b61", "manufacturer": "Honeywell Imaging & Mobility", "product": "1950g",
      "serial": "19310B4E52", "speed": "12", "power": "350mA",
      "interfaces": [{"class": "03", "sub": "01", "proto": "01", "driver": "usbhid", "nodes": [("input", "event4"), ("hidraw", "hidraw2")]}]},
-    {"port": "1-1.5", "vid": "16c0", "pid": "05df", "manufacturer": "www.dcttech.com", "product": "USBRelay2",
+    {"port": "1-1.1.4.2", "vid": "16c0", "pid": "05df", "manufacturer": "www.dcttech.com", "product": "USBRelay2",
      "speed": "1.5", "power": "100mA",
      "interfaces": [{"class": "03", "sub": "00", "proto": "00", "driver": "usbhid", "nodes": [("hidraw", "hidraw3")]}]},
-    {"port": "1-1.6", "vid": "0403", "pid": "6001", "manufacturer": "FTDI", "product": "FT232R USB UART",
+    {"port": "1-1.1.4.3", "vid": "0403", "pid": "6001", "manufacturer": "FTDI", "product": "FT232R USB UART",
      "serial": "A10KZP45", "speed": "12", "power": "90mA",
      "interfaces": [{"class": "ff", "sub": "ff", "proto": "ff", "driver": "ftdi_sio", "nodes": [("ttyusb", "ttyUSB0")]}]},
-    {"port": "1-2", "vid": "0781", "pid": "5581", "manufacturer": "SanDisk", "product": "Ultra",
+    {"port": "1-1.2", "vid": "0781", "pid": "5581", "manufacturer": "SanDisk", "product": "Ultra",
      "serial": "4C530001230725117413", "speed": "480", "power": "224mA",
      "interfaces": [{"class": "08", "sub": "06", "proto": "50", "driver": "usb-storage", "nodes": [("block", "sda")]}]},
-    {"port": "1-3", "vid": "1546", "pid": "01a7", "manufacturer": "u-blox AG - www.u-blox.com",
+    {"port": "1-1.3", "vid": "1546", "pid": "01a7", "manufacturer": "u-blox AG - www.u-blox.com",
      "product": "u-blox 7 - GPS/GNSS Receiver", "speed": "12", "power": "100mA", "dev_class": "02",
      "interfaces": [{"class": "02", "sub": "02", "proto": "01", "driver": "cdc_acm", "nodes": [("tty", "ttyACM1")]},
                     {"class": "0a", "sub": "00", "proto": "00", "driver": "cdc_acm"}]},

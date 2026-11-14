@@ -2,7 +2,7 @@
 [Description]
 
 # 4-part version, each 0-255. build.sh names the .upgx from this and writes it into app/VERSION.
-Version = 0.1.0.4
+Version = 0.1.0.5
 
 # R*** = any reader. Use R700V2 to restrict to v2 hardware (the bundled Python is aarch64 only).
 Valid Reader Hardware = R***

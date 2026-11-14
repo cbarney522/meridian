@@ -178,6 +178,7 @@ class App:
                 "role": role, "label": usb.ROLES[role]["label"], "port": port, "assigned": port is not None,
                 "status": r["status"] if r else ("missing" if port else "unassigned"),
                 "product": r["product"] if r else None, "nodes": r["nodes"] if r else [],
+                "location": r.get("location") if r else None,
                 "last_scan": s.get("last"), "scans_today": s.get("scans", 0), "errors_today": s.get("errors", 0),
                 "listener_error": st["errors"].get(port),
             })
@@ -228,6 +229,7 @@ class App:
             "drive": {"present": dev is not None, "port": port,
                       "product": dev["product"] if dev else None, "manufacturer": dev["manufacturer"] if dev else None,
                       "serial": dev["serial"] if dev else None, "node": nodes[0] if nodes else None,
+                      "location": dev.get("location") if dev else None,
                       "mounted": bool(mount), "mount": mount, "capacity": cap,
                       "writable": (write_error is None) if mount else None, "write_error": write_error},
             "usage": usage,

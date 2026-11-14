@@ -213,12 +213,12 @@ class UsbMock:
         self.unplugged = set()
         self.revision = 1
         self.assignments = {
-            "1-1.1": {"role": "badge_in", "vid": "0c27", "pid": "3bfa", "product": "pcProx Plus RDR-80081AKU"},
-            "1-1.2": {"role": "badge_out", "vid": "0c27", "pid": "3bfa", "product": "pcProx Plus RDR-80081AKU"},
-            "1-1.3": {"role": "io_board", "vid": "2e8a", "pid": "000a", "product": "Meridian I/O"},
-            "1-1.4": {"role": "scanner", "vid": "0c2e", "pid": "0b61", "product": "1950g"},
-            "1-1.7": {"role": "keypad", "vid": "05e0", "pid": "1200", "product": "Foot pedal"},  # not plugged in
-            "1-2":   {"role": "storage", "vid": "0781", "pid": "5581", "product": "Ultra"},
+            "1-1.1.1": {"role": "badge_in", "vid": "0c27", "pid": "3bfa", "product": "pcProx Plus RDR-80081AKU"},
+            "1-1.1.2": {"role": "badge_out", "vid": "0c27", "pid": "3bfa", "product": "pcProx Plus RDR-80081AKU"},
+            "1-1.1.3": {"role": "io_board", "vid": "2e8a", "pid": "000a", "product": "Meridian I/O"},
+            "1-1.1.4.1": {"role": "scanner", "vid": "0c2e", "pid": "0b61", "product": "1950g"},
+            "1-1.1.4.4": {"role": "keypad", "vid": "05e0", "pid": "1200", "product": "Foot pedal"},  # not plugged in
+            "1-1.2":   {"role": "storage", "vid": "0781", "pid": "5581", "product": "Ultra"},
         }
         fake_sysfs.build(self.root)
 
@@ -343,6 +343,7 @@ class BadgeMock:
                 "status": r["status"] if r else ("missing" if port else "unassigned"),
                 "product": r["product"] if r else None,
                 "nodes": r["nodes"] if r else [],
+                "location": r.get("location") if r else None,
                 "last_scan": st.get("last"), "scans_today": st.get("scans", 0), "errors_today": st.get("errors", 0),
             })
         others = [{"port": p, "product": r["product"], "role": r["role"], "nodes": r["nodes"]}
@@ -418,6 +419,7 @@ class StorageMock:
                     "present": present, "port": port,
                     "product": dev["product"] if dev else None, "manufacturer": dev["manufacturer"] if dev else None,
                     "serial": dev["serial"] if dev else None, "node": node,
+                    "location": dev.get("location") if dev else None,
                     "mounted": bool(mount), "mount": mount, "capacity": cap,
                 },
                 "usage": items,

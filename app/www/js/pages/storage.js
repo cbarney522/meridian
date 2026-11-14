@@ -64,7 +64,7 @@ export function render(root, ctx) {
           drv.present ? h("dl", { class: "kv" },
             h("dt", {}, "Device"), h("dd", {}, [drv.manufacturer, drv.product].filter(Boolean).join(" ")),
             h("dt", {}, "Serial"), h("dd", { class: "mono" }, drv.serial || "—"),
-            h("dt", {}, "Port"), h("dd", { class: "mono" }, drv.port),
+            h("dt", {}, "Port"), h("dd", {}, h("span", { class: "mono" }, drv.port), drv.location ? h("span", { class: "muted" }, ` · ${drv.location}`) : null),
             h("dt", {}, "Linux device"), h("dd", { class: "mono" }, drv.mount ? drv.mount.device : drv.node || "—"),
             h("dt", {}, "Mounted at"), h("dd", { class: "mono" }, drv.mount ? drv.mount.mount_point : "—"),
             h("dt", {}, "Filesystem"), h("dd", {}, drv.mount

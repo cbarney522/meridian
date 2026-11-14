@@ -71,7 +71,7 @@ export function render(root, ctx) {
         h("div", { class: "card-head" }, h("h2", {}, ROLE_LABEL[r.role]), h("span", { class: "pill " + statusPill[0] }, statusPill[1])),
         r.assigned
           ? h("dl", { class: "kv" },
-              h("dt", {}, "Port"), h("dd", { class: "mono" }, r.port),
+              h("dt", {}, "Port"), h("dd", {}, h("span", { class: "mono" }, r.port), r.location ? h("span", { class: "muted" }, ` · ${r.location}`) : null),
               h("dt", {}, "Device"), h("dd", {}, r.product || "—"),
               h("dt", {}, "Input"), h("dd", { class: "mono" }, r.nodes.find((n) => n.includes("event")) || "—"),
               h("dt", {}, "Last scan"), h("dd", {}, r.last_scan

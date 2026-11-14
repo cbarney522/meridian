@@ -75,8 +75,9 @@ export function render(root, ctx) {
     const changedHere = state.pending.has(r.port);
     return h("tr", { class: (r.status === "missing" ? "row-off " : "") + (changedHere ? "row-dirty" : "") },
       h("td", { class: "port-cell" },
-        h("span", { class: "port", style: { paddingLeft: `${r.depth * 18}px` } },
-          r.depth ? h("span", { class: "tree", "aria-hidden": "true" }, "└ ") : null, r.port)),
+        h("div", { style: { paddingLeft: `${r.depth * 18}px` } },
+          h("span", { class: "port" }, r.depth ? h("span", { class: "tree", "aria-hidden": "true" }, "└ ") : null, r.port),
+          r.location && !r.location.startsWith("via ") ? h("div", { class: "sub port-label" }, r.location) : null)),
       h("td", {},
         h("div", { class: "dev-name" }, r.product || (r.status === "missing" ? "(not detected)" : "Unknown device")),
         h("div", { class: "sub" }, [r.manufacturer, r.serial ? `S/N ${r.serial}` : null].filter(Boolean).join(" · "))),
