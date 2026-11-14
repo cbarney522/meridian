@@ -1,0 +1,135 @@
+{
+  "_comment": "Single source of truth for navigation. Each page needs one permission to be visible. The server filters this per user (GET /api/menu) and uses the same 'perm' values to guard each page's API.",
+  "menus": [
+    {
+      "id": "dashboard", "label": "Dashboard", "route": "/dashboard", "perm": "dashboard.view"
+    },
+    {
+      "id": "operations", "label": "Operations",
+      "groups": [
+        { "label": "Live", "items": [
+          { "id": "sessions", "label": "Active sessions", "route": "/operations/sessions", "perm": "sessions.manage" },
+          { "id": "alarms",   "label": "Alarms",          "route": "/operations/alarms",   "perm": "sessions.manage" },
+          { "id": "override", "label": "Manual outputs",  "route": "/operations/override", "perm": "io.override" }
+        ]},
+        { "label": "Tags", "items": [
+          { "id": "unknown", "label": "Unknown tags", "route": "/operations/unknown-tags", "perm": "tools.edit" }
+        ]}
+      ]
+    },
+    {
+      "id": "hardware", "label": "Hardware",
+      "groups": [
+        { "label": "RFID", "items": [
+          { "id": "antennas", "label": "Antennas",          "route": "/hardware/antennas", "perm": "rfid.view" },
+          { "id": "zones",    "label": "Zones",             "route": "/hardware/zones",    "perm": "rfid.view" },
+          { "id": "profiles", "label": "Inventory profile", "route": "/hardware/profiles", "perm": "rfid.view" }
+        ]},
+        { "label": "I/O", "items": [
+          { "id": "iomap",  "label": "I/O map",       "route": "/hardware/io-map", "perm": "hardware.view" },
+          { "id": "ioboard","label": "I/O board",     "route": "/hardware/io-board", "perm": "hardware.view" },
+          { "id": "iotest", "label": "Output test",   "route": "/hardware/io-test", "perm": "io.override" }
+        ]},
+        { "label": "USB", "items": [
+          { "id": "usbdev", "label": "Devices",        "route": "/hardware/usb",    "perm": "hardware.view" },
+          { "id": "badges", "label": "Badge readers",  "route": "/hardware/badges", "perm": "hardware.view" },
+          { "id": "storage","label": "Storage",        "route": "/hardware/storage","perm": "hardware.view" }
+        ]}
+      ]
+    },
+    {
+      "id": "rules", "label": "Rules",
+      "groups": [
+        { "label": "Rules", "items": [
+          { "id": "rulelist", "label": "All rules",    "route": "/rules/list",      "perm": "rules.view" },
+          { "id": "ruleedit", "label": "New rule",     "route": "/rules/new",       "perm": "rules.edit" },
+          { "id": "rulesim",  "label": "Simulator",    "route": "/rules/simulator", "perm": "rules.edit" }
+        ]},
+        { "label": "Building blocks", "items": [
+          { "id": "timers",   "label": "Timers & variables", "route": "/rules/variables", "perm": "rules.view" },
+          { "id": "schedules","label": "Schedules",          "route": "/rules/schedules", "perm": "rules.view" }
+        ]}
+      ]
+    },
+    {
+      "id": "data", "label": "People & Tools",
+      "groups": [
+        { "label": "Access", "items": [
+          { "id": "users",  "label": "Authorized users", "route": "/people/users",      "perm": "access.view" },
+          { "id": "roles",  "label": "Access roles",     "route": "/people/roles",      "perm": "access.view" },
+          { "id": "usync",  "label": "User sync",        "route": "/people/sync",       "perm": "access.manage" }
+        ]},
+        { "label": "Tools", "items": [
+          { "id": "toolcache", "label": "Tool cache",  "route": "/tools/cache", "perm": "tools.view" },
+          { "id": "toolsync",  "label": "Tool sync",   "route": "/tools/sync",  "perm": "tools.edit" }
+        ]}
+      ]
+    },
+    {
+      "id": "integrations", "label": "Integrations",
+      "groups": [
+        { "label": "Outputs", "items": [
+          { "id": "mqtt",  "label": "MQTT",            "route": "/integrations/mqtt",    "perm": "integrations.view" },
+          { "id": "http",  "label": "HTTP / webhooks", "route": "/integrations/http",    "perm": "integrations.view" },
+          { "id": "files", "label": "File export",     "route": "/integrations/files",   "perm": "integrations.view" }
+        ]},
+        { "label": "Delivery", "items": [
+          { "id": "outbox", "label": "Outbox",         "route": "/integrations/outbox",  "perm": "integrations.view" }
+        ]}
+      ]
+    },
+    {
+      "id": "kiosk", "label": "Kiosk",
+      "groups": [
+        { "label": "Display", "items": [
+          { "id": "klayout",  "label": "Layout & branding", "route": "/kiosk/layout",  "perm": "kiosk.view" },
+          { "id": "kprompts", "label": "Input prompts",     "route": "/kiosk/prompts", "perm": "kiosk.view" },
+          { "id": "kpreview", "label": "Preview",           "route": "/kiosk/preview", "perm": "kiosk.view" }
+        ]}
+      ]
+    },
+    {
+      "id": "records", "label": "Data",
+      "groups": [
+        { "label": "History", "items": [
+          { "id": "events", "label": "Event log",  "route": "/data/events", "perm": "data.view" },
+          { "id": "audit",  "label": "Audit log",  "route": "/data/audit",  "perm": "audit.view" }
+        ]},
+        { "label": "Storage", "items": [
+          { "id": "tables", "label": "Database tables", "route": "/data/tables",  "perm": "data.view" },
+          { "id": "export", "label": "Export & logs",   "route": "/data/export",  "perm": "data.export" }
+        ]}
+      ]
+    },
+    {
+      "id": "system", "label": "System",
+      "groups": [
+        { "label": "Reader", "items": [
+          { "id": "about",   "label": "About this reader", "route": "/system/about",    "perm": "system.view" },
+          { "id": "time",    "label": "Time & location",   "route": "/system/time",     "perm": "system.view" },
+          { "id": "network", "label": "Network",           "route": "/system/network",  "perm": "system.view" }
+        ]},
+        { "label": "Security", "items": [
+          { "id": "certs",    "label": "Certificates", "route": "/system/certificates", "perm": "system.view" },
+          { "id": "accounts", "label": "Accounts",     "route": "/system/accounts",     "perm": "accounts.manage" }
+        ]},
+        { "label": "Maintenance", "items": [
+          { "id": "backup", "label": "Backup & restore", "route": "/system/backup", "perm": "system.edit" }
+        ]}
+      ]
+    },
+    {
+      "id": "developer", "label": "Developer",
+      "groups": [
+        { "label": "Inspect", "items": [
+          { "id": "raw",     "label": "Raw event stream", "route": "/dev/raw-events", "perm": "dev.tools" },
+          { "id": "apiexp",  "label": "API explorer",     "route": "/dev/api",        "perm": "dev.tools" },
+          { "id": "debug",   "label": "Debug log",        "route": "/dev/debug-log",  "perm": "dev.tools" }
+        ]},
+        { "label": "Configure", "items": [
+          { "id": "flags",   "label": "Feature flags",    "route": "/dev/flags",      "perm": "dev.tools" }
+        ]}
+      ]
+    }
+  ]
+}

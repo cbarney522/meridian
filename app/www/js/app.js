@@ -1,0 +1,133 @@
+// Meridian app shell: session, role-filtered menu, hash router, breadcrumb, live event feed.
+import { api, h } from "./api.js";
+import { buildMenubar, markActive, indexMenu } from "./menu.js";
+import * as dashboard from "./pages/dashboard.js";
+import * as placeholder from "./pages/placeholder.js";
+
+// Pages that have real implementations. Everything else in the menu gets the placeholder
+// until it's built, so the whole navigation works from day one.
+const PAGES = { "/dashboard": dashboard };
+
+const $ = (id) => document.getElementById(id);
+const ctx = { session: null, menuIndex: new Map(), events: null };
+let cleanup = null;
+
+// ---------- live events (one shared connection for every page)
+class LiveFeed {
+  constructor() { this.subs = new Set(); this.es = null; }
+  start() {
+    this.stop();
+    this.es = new EventSource("api/events");
+    const conn = $("conn"), label = conn.querySelector(".conn-label");
+    this.es.onopen = () => { conn.className = "conn live"; label.textContent = "Live"; };
+    this.es.onerror = () => { conn.className = "conn down"; label.textContent = "Reconnecting"; };
+    const types = ["badge_scan", "tag_enter", "tag_exit", "session_closed", "gpi_change", "rule_fired"];
+    for (const t of types) this.es.addEventListener(t, (e) => {
+      const ev = JSON.parse(e.data);
+      this.subs.forEach((fn) => fn(ev));
+    });
+  }
+  stop() {
+    if (this.es) this.es.close();
+    this.es = null;
+    const conn = $("conn");
+    conn.className = "conn"; conn.querySelector(".conn-label").textContent = "Offline";
+  }
+  subscribe(fn) { this.subs.add(fn); return () => this.subs.delete(fn); }
+}
+ctx.events = new LiveFeed();
+
+// ---------- session + menu
+async function loadSession() {
+  const [session, menu] = await Promise.all([api.session(), api.menu()]);
+  ctx.session = session;
+  ctx.menus = menu.menus;
+  ctx.menuIndex = indexMenu(menu.menus);
+
+  $("reader-name").textContent = session.reader.name;
+  $("user-name").textContent = session.user;
+  $("role-badge").textContent = session.role_label;
+  buildMenubar($("mainnav"), menu.menus);
+
+  const sw = $("dev-switch");
+  if (session.dev_mode) {
+    const sel = $("role-select");
+    sel.replaceChildren(...session.roles.map((r) =>
+      h("option", { value: r.id, selected: r.id === session.role, title: r.description }, r.label)));
+    sw.hidden = false;
+  } else sw.hidden = true;
+
+  if (session.permissions.includes("dashboard.view")) ctx.events.start();
+  else ctx.events.stop();
+}
+
+function firstRoute() {
+  const first = ctx.menus[0];
+  if (!first) return null;
+  return first.route || first.groups[0].items[0].route;
+}
+
+// ---------- router
+async function route() {
+  if (cleanup) { try { cleanup(); } catch { /* ignore */ } cleanup = null; }
+  const page = $("page");
+  let path = location.hash.replace(/^#/, "");
+
+  if (!ctx.menus.length) {   // e.g. Operator: kiosk only
+    renderCrumbs([]);
+    page.replaceChildren(h("div", { class: "notice" },
+      h("h1", {}, "No access to configuration"),
+      h("p", {}, `The ${ctx.session.role_label} role uses the kiosk only. Ask a site admin if you need configuration access.`)));
+    return;
+  }
+  if (!path) { location.replace("#" + firstRoute()); return; }
+
+  markActive($("mainnav"), path);
+  const entry = ctx.menuIndex.get(path);
+  renderCrumbs(entry ? entry.trail : [path]);
+
+  // The server decides, even if someone types a hidden page into the address bar.
+  let perm = null;
+  try {
+    perm = (await api.routeCheck(path)).perm;
+  } catch (err) {
+    const forbidden = err.status === 403;
+    page.replaceChildren(h("div", { class: "notice bad" },
+      h("h1", {}, forbidden ? "No access" : "Page not found"),
+      h("p", {}, forbidden
+        ? ["Your role (", ctx.session.role_label, ") doesn't include ", h("code", {}, err.body?.needs || "this permission"), "."]
+        : ["There's no page at ", h("code", {}, path), "."]),
+      h("p", {}, h("a", { href: "#" + firstRoute() }, "Go to your start page"))));
+    return;
+  }
+
+  const mod = PAGES[path] || placeholder;
+  page.replaceChildren();
+  cleanup = mod.render(page, { ...ctx, path, perm, title: entry ? entry.label : path, trail: entry ? entry.trail : [] }) || null;
+  page.focus({ preventScroll: true });
+}
+
+function renderCrumbs(trail) {
+  $("breadcrumb").replaceChildren(...trail.map((t) => h("li", {}, t)));
+}
+
+// ---------- boot
+async function boot() {
+  try {
+    await loadSession();
+  } catch (err) {
+    $("page").replaceChildren(h("div", { class: "notice bad" },
+      h("h1", {}, "Can't reach the reader"),
+      h("p", {}, String(err.message || err))));
+    return;
+  }
+  $("role-select").addEventListener("change", async (e) => {
+    await api.setRole(e.target.value);   // mock server only
+    await loadSession();
+    route();
+  });
+  window.addEventListener("hashchange", route);
+  route();
+}
+
+boot();

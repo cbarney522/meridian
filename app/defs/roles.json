@@ -1,0 +1,76 @@
+{
+  "_comment": "Roles are bundles of permissions. The server checks permissions on every API call; the UI uses the same data only to decide what to show. '*' means every permission.",
+  "permissions": {
+    "dashboard.view":    "See the dashboard and live status",
+    "rfid.view":         "View RFID settings (antennas, zones, profiles)",
+    "rfid.edit":         "Change RFID settings",
+    "hardware.view":     "View I/O map, USB devices, badge readers",
+    "hardware.edit":     "Change I/O map and device assignments",
+    "io.override":       "Manually drive outputs (unlock, lights, buzzers)",
+    "rules.view":        "View rules",
+    "rules.edit":        "Create, change and enable rules",
+    "access.view":       "View authorized users and roles",
+    "access.manage":     "Change access lists, sync sources and schedules",
+    "tools.view":        "View tag-to-tool cache and unknown tags",
+    "tools.edit":        "Resolve unknown tags, change tool cache settings",
+    "integrations.view": "View MQTT, HTTP and file export settings",
+    "integrations.edit": "Change integrations and their credentials",
+    "kiosk.view":        "View kiosk configuration",
+    "kiosk.edit":        "Change kiosk layout, prompts and branding",
+    "sessions.manage":   "Close sessions, acknowledge alarms",
+    "data.view":         "View event log and database tables",
+    "data.export":       "Export data and upload logs",
+    "system.view":       "View system settings",
+    "system.edit":       "Change time, location, network, certificates",
+    "accounts.manage":   "Manage technician and admin accounts",
+    "audit.view":        "View the audit log",
+    "dev.tools":         "Developer tools: raw events, API explorer, debug logs, feature flags"
+  },
+  "roles": {
+    "developer": {
+      "label": "Developer",
+      "description": "Meridian engineering. Sees everything.",
+      "permissions": ["*"]
+    },
+    "site_admin": {
+      "label": "Site Admin",
+      "description": "Customer IT or crib manager. Accounts, credentials, certificates, audit.",
+      "permissions": [
+        "dashboard.view", "rfid.view", "hardware.view", "rules.view",
+        "access.view", "access.manage", "tools.view",
+        "integrations.view", "integrations.edit", "kiosk.view",
+        "data.view", "data.export", "system.view", "system.edit",
+        "accounts.manage", "audit.view"
+      ]
+    },
+    "technician": {
+      "label": "Technician",
+      "description": "Field installer. Hardware, RFID, rules, integrations, kiosk setup.",
+      "permissions": [
+        "dashboard.view", "rfid.view", "rfid.edit",
+        "hardware.view", "hardware.edit", "io.override",
+        "rules.view", "rules.edit", "access.view", "tools.view", "tools.edit",
+        "integrations.view", "integrations.edit", "kiosk.view", "kiosk.edit",
+        "data.view", "data.export", "system.view"
+      ]
+    },
+    "supervisor": {
+      "label": "Supervisor",
+      "description": "Day-to-day operations. Sessions, alarms, overrides, unknown tags.",
+      "permissions": [
+        "dashboard.view", "io.override", "sessions.manage",
+        "access.view", "tools.view", "tools.edit", "data.view"
+      ]
+    },
+    "viewer": {
+      "label": "Viewer",
+      "description": "Read-only dashboards, history and audit log.",
+      "permissions": ["dashboard.view", "data.view", "audit.view"]
+    },
+    "operator": {
+      "label": "Operator",
+      "description": "Shop-floor user. Kiosk only; no access to this configuration UI.",
+      "permissions": []
+    }
+  }
+}
