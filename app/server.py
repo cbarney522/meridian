@@ -59,6 +59,7 @@ def load_event_types():
 
 
 EVENT_TYPES = load_event_types()
+REPLAY_EVENTS = 30          # recent events sent to a newly connected browser
 READER_API_DEFAULTS = {"username": "root", "password": ""}
 FACTORY_PASSWORD = "impinj"          # R700 factory default; tried only while no password is saved
 STORAGE_DEFAULTS = {"retention_days_events": 90, "retention_days_logs": 30, "alert_free_pct": 10}
@@ -862,13 +863,17 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(result, status)
 
     def stream_events(self):
-        last = self.headers.get("Last-Event-ID")
-        last = int(last) if last and last.isdigit() else APP.bus.seq
+        # A reconnecting browser sends Last-Event-ID and gets what it missed; a fresh connection
+        # gets the most recent events too (marked "replay"), so pages can show recent history.
+        hdr = self.headers.get("Last-Event-ID")
+        fresh = not (hdr and hdr.isdigit())
+        last = int(hdr) if not fresh else max(0, APP.bus.seq - REPLAY_EVENTS)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
+        replay_upto = APP.bus.seq
         try:
             self.wfile.write(b"retry: 3000\n\n")
             self.wfile.flush()
@@ -877,7 +882,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not pending:
                     self.wfile.write(b": keepalive\n\n")
                 for e in pending:
-                    self.wfile.write(f"id: {e['id']}\nevent: {e['type']}\ndata: {json.dumps(e)}\n\n".encode())
+                    if fresh and e["id"] <= replay_upto:
+                        e = dict(e, replay=True)
+                    # no "event:" line: every type arrives as a plain message, so new types need no client change
+                    self.wfile.write(f"id: {e['id']}\ndata: {json.dumps(e)}\n\n".encode())
                     last = e["id"]
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, ssl.SSLError, OSError):

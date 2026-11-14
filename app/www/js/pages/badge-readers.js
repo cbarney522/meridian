@@ -224,6 +224,7 @@ export function render(root, ctx) {
   }
 
   const unsub = ctx.events.subscribe((ev) => {
+    if (ev.replay) return;                       // only scans made while this page is open
     if (ev.type === "badge_raw") {
       state.scans.unshift(ev);
       state.scans.length = Math.min(state.scans.length, MAX_SCANS);

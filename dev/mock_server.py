@@ -900,8 +900,10 @@ class Handler(SimpleHTTPRequestHandler):
     def stream_events(self, url):
         """Server-Sent Events. The browser's EventSource reconnects automatically and sends
         Last-Event-ID, so a reconnecting client gets what it missed from the buffer."""
-        last = self.headers.get("Last-Event-ID")
-        last = int(last) if last and last.isdigit() else SIM.seq
+        hdr = self.headers.get("Last-Event-ID")
+        fresh = not (hdr and hdr.isdigit())
+        last = int(hdr) if not fresh else max(0, SIM.seq - 30)
+        replay_upto = SIM.seq
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Connection", "keep-alive")
@@ -910,16 +912,21 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             self.wfile.write(b"retry: 3000\n\n")
             self.wfile.flush()
+            first = True
             while True:
                 with SIM.lock:
-                    SIM.lock.wait(timeout=15)
+                    if not first:
+                        SIM.lock.wait(timeout=15)
+                    first = False
                     pending = [e for e in SIM.events if e["id"] > last]
                 if STATE["role"] != role_at_start and not ACCESS.can(STATE["role"], "dashboard.view"):
                     return  # permission revoked mid-stream
                 if not pending:
                     self.wfile.write(b": keepalive\n\n")
                 for e in pending:
-                    self.wfile.write(f"id: {e['id']}\nevent: {e['type']}\ndata: {json.dumps(e)}\n\n".encode())
+                    if fresh and e["id"] <= replay_upto:
+                        e = dict(e, replay=True)
+                    self.wfile.write(f"id: {e['id']}\ndata: {json.dumps(e)}\n\n".encode())
                     last = e["id"]
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):

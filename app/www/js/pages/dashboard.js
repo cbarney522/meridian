@@ -5,7 +5,7 @@ const EVENT_LABEL = {
   badge_scan: "Badge", tag_enter: "Returned", tag_exit: "Removed",
   session_closed: "Session closed", gpi_change: "Input", rule_fired: "Rule fired",
   usb_attached: "USB attached", usb_detached: "USB removed", storage_changed: "Storage",
-  mqtt_state: "MQTT", identify: "Identify",
+  mqtt_state: "MQTT", identify: "Identify", badge_raw: "Scan",
 };
 const MAX_EVENTS = 40;
 
@@ -27,12 +27,11 @@ export function render(root, ctx) {
 
   let first = true;
   const unsub = ctx.events.subscribe((ev) => {
-    if (ev.type === "badge_raw") return;          // low-level; shown on Hardware › USB › Badge readers
     if (first) { feed.replaceChildren(); first = false; }
     feed.prepend(eventRow(ev));
     while (feed.children.length > MAX_EVENTS) feed.lastChild.remove();
-    if (ev.type !== "gpi_change") refresh();   // counts and session changed
-  });
+    if (!ev.replay && ev.type !== "gpi_change") refresh();   // counts and session changed
+  }, { history: true });
 
   refresh();
   const timer = setInterval(refresh, 5000);
@@ -103,7 +102,8 @@ function drawCards(root, s, canAbout) {
 }
 
 function eventRow(ev) {
-  const time = ev.ts.slice(11);
+  const today = new Date().toISOString().slice(0, 10);
+  const time = (ev.ts.slice(0, 10) === today ? "" : ev.ts.slice(5, 10) + " ") + ev.ts.slice(11);
   let cls = ev.type, text;
   switch (ev.type) {
     case "badge_scan":
@@ -116,6 +116,10 @@ function eventRow(ev) {
     case "gpi_change": text = `${ev.input} ${ev.state}`; break;
     case "rule_fired": text = `${ev.rule} — ${ev.detail}`; break;
     case "usb_attached": case "usb_detached": text = `${ev.product || "Device"} on port ${ev.port}`; break;
+    case "badge_raw":
+      if (ev.result && ev.result.ok) text = `Badge ${ev.result.badge_id} on ${ev.role ? ev.role.replace("_", " ") : "port " + ev.port}`;
+      else { cls = "denied"; text = `Unreadable scan on ${ev.role ? ev.role.replace("_", " ") : "port " + ev.port}${ev.result && ev.result.error ? ` (${ev.result.error})` : ""}`; }
+      break;
     case "mqtt_state": cls = ev.connected ? "mqtt_state" : "denied"; text = ev.connected ? "Connected to the broker" : "Lost the broker connection"; break;
     case "identify": text = `Identify requested${ev.source ? " over " + ev.source.toUpperCase() : ""} (${ev.seconds} s)`; break;
     case "storage_changed": text = `Data drive ${ev.action === "eject" ? "ejected" : ev.action === "mount" ? "mounted" : "formatted"}`; break;

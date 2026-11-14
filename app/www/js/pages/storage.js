@@ -186,6 +186,7 @@ export function render(root, ctx) {
   }
 
   const unsub = ctx.events.subscribe((ev) => {
+    if (ev.replay) return;
     if (["storage_changed", "usb_attached", "usb_detached"].includes(ev.type)) load();
   });
   load();

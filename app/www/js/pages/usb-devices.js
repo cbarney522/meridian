@@ -191,6 +191,7 @@ export function render(root, ctx) {
 
   // Hot-plug: the reader pushes usb_attached / usb_detached; unsaved edits are kept.
   const unsub = ctx.events.subscribe((ev) => {
+    if (ev.replay) return;
     if (ev.type !== "usb_attached" && ev.type !== "usb_detached") return;
     notify(`${ev.type === "usb_attached" ? "Connected" : "Disconnected"}: ${ev.product || "device"} on port ${ev.port}`,
            ev.type === "usb_detached");

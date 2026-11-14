@@ -324,3 +324,7 @@ Defined in `app/defs/events.json` (also returned as `event_types` by `GET /api/m
 | `gpi_change` | planned | A sensor or button input changed (door contact, motion sensor, push button). | `{"type":"gpi_change","input":"door_1","state":"open","ts":"2026-11-14T08:17:14"}` |
 | `rule_fired` | planned | A configured rule's conditions were met and its actions ran. | `{"type":"rule_fired","rule":"Door held open","detail":"door_1 open > 30 s: buzzer on","ts":"2026-11-14T08:17:45"}` |
 | `storage_changed` | planned | The USB data drive was inserted, removed or became unwritable. | `{"type":"storage_changed","action":"removed","port":"1-1.2","ts":"2026-11-14T09:02:10"}` |
+
+## Live events stream
+
+`GET /api/events` (dashboard.view) is Server-Sent Events. Every event is a plain `data:` message (no `event:` name) with an `id:`, so clients get new types without changes. A fresh connection first receives up to the last 30 events with `"replay": true`. A reconnect that sends `Last-Event-ID` receives only what it missed. The browser keeps the last 100 events per tab; the Dashboard shows them on open (pages that react to events, such as USB devices, Storage and Badge readers, ignore replays).

@@ -27,19 +27,22 @@ let cleanup = null;
 
 // ---------- live events (one shared connection for every page)
 class LiveFeed {
-  constructor() { this.subs = new Set(); this.es = null; }
+  constructor() { this.subs = new Set(); this.es = null; this.history = []; this.seen = new Set(); }
   start() {
     this.stop();
     this.es = new EventSource("api/events");
     const conn = $("conn"), label = conn.querySelector(".conn-label");
     this.es.onopen = () => { conn.className = "conn live"; label.textContent = "Live"; conn.title = "Live connection"; };
     this.es.onerror = () => { conn.className = "conn down"; label.textContent = "Reconnecting"; conn.title = "Reconnecting…"; };
-    const types = ["badge_scan", "tag_enter", "tag_exit", "session_closed", "gpi_change", "rule_fired",
-                   "usb_attached", "usb_detached", "badge_raw", "storage_changed"];
-    for (const t of types) this.es.addEventListener(t, (e) => {
-      const ev = JSON.parse(e.data);
+    this.es.onmessage = (e) => {
+      let ev;
+      try { ev = JSON.parse(e.data); } catch { return; }
+      if (this.seen.has(ev.id)) return;              // already have it (e.g. replay after a reconnect)
+      this.seen.add(ev.id);
+      this.history.push(ev);
+      if (this.history.length > 100) this.seen.delete(this.history.shift().id);
       this.subs.forEach((fn) => fn(ev));
-    });
+    };
   }
   stop() {
     if (this.es) this.es.close();
@@ -47,7 +50,12 @@ class LiveFeed {
     const conn = $("conn");
     conn.className = "conn"; conn.querySelector(".conn-label").textContent = "Offline";
   }
-  subscribe(fn) { this.subs.add(fn); return () => this.subs.delete(fn); }
+  // subscribe(fn, { history: true }) first replays what this browser already received
+  subscribe(fn, opts = {}) {
+    if (opts.history) this.history.forEach((ev) => fn({ ...ev, replay: true }));
+    this.subs.add(fn);
+    return () => this.subs.delete(fn);
+  }
 }
 ctx.events = new LiveFeed();
 
