@@ -25,6 +25,8 @@
     "system.edit":       "Change time, location, network, certificates",
     "accounts.manage":   "Manage technician and admin accounts",
     "audit.view":        "View the audit log",
+    "license.view":      "See license status, licensee and expiry",
+    "license.manage":    "Enter or replace the license",
     "dev.tools":         "Developer tools: raw events, API explorer, debug logs, feature flags"
   },
   "roles": {
@@ -41,7 +43,7 @@
         "access.view", "access.manage", "tools.view",
         "integrations.view", "integrations.edit", "kiosk.view",
         "data.view", "data.export", "system.view", "system.edit",
-        "accounts.manage", "audit.view"
+        "accounts.manage", "audit.view", "license.view", "license.manage"
       ]
     },
     "technician": {
@@ -52,7 +54,7 @@
         "hardware.view", "hardware.edit", "io.override",
         "rules.view", "rules.edit", "access.view", "tools.view", "tools.edit",
         "integrations.view", "integrations.edit", "kiosk.view", "kiosk.edit",
-        "data.view", "data.export", "system.view"
+        "data.view", "data.export", "system.view", "license.view"
       ]
     },
     "supervisor": {
@@ -66,7 +68,7 @@
     "viewer": {
       "label": "Viewer",
       "description": "Read-only dashboards, history and audit log.",
-      "permissions": ["dashboard.view", "site.view", "data.view", "audit.view"]
+      "permissions": ["dashboard.view", "site.view", "data.view", "audit.view", "license.view"]
     },
     "operator": {
       "label": "Operator",

@@ -116,6 +116,9 @@
           { "id": "certs",    "label": "Certificates", "route": "/system/certificates", "perm": "system.view" },
           { "id": "accounts", "label": "Accounts",     "route": "/system/accounts",     "perm": "accounts.manage" }
         ]},
+        { "label": "License", "items": [
+          { "id": "license", "label": "License", "route": "/system/license", "perm": "license.view" }
+        ]},
         { "label": "Maintenance", "items": [
           { "id": "backup", "label": "Backup & restore", "route": "/system/backup", "perm": "system.edit" }
         ]}
