@@ -8,6 +8,18 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PRESETS = ["default", "deep-scan", "dense-reader", "crib-portal"]
+REPORT_INTERVAL = {"deep-scan": 10}       # seconds; others report every read
+
+
+def preset_config(pid):
+    ants = [1] if pid == "default" else [1, 2, 3, 4]
+    return {"eventConfig": {"common": {"hostname": "disabled"},
+                            "tagInventory": {"tagReporting": {"reportingIntervalSeconds": REPORT_INTERVAL.get(pid, 0),
+                                                              "tagCacheSize": 2048, "antennaIdentifier": "antennaPort",
+                                                              "tagIdentifier": "epc"},
+                                             "epcHex": "enabled", "antennaPort": "enabled", "peakRssiCdbm": "enabled"}},
+            "antennaConfigs": [{"antennaPort": a, "transmitPowerCdbm": 2700 if a == 1 else 3000,
+                                "inventorySession": 1, "inventorySearchMode": "single-target"} for a in ants]}
 
 
 class World:
@@ -65,6 +77,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/v1/profiles/inventory/presets":
             return self.reply(200, PRESETS)
+        if self.path.startswith("/api/v1/profiles/inventory/presets/"):
+            pid = self.path.rsplit("/", 1)[-1]
+            return self.reply(200, preset_config(pid)) if pid in PRESETS else self.reply(404, {"message": f"Preset '{pid}' not found"})
         if self.path == "/api/v1/status":
             return self.reply(200, {"status": "running" if WORLD.running else "idle",
                                     "activePreset": {"id": WORLD.preset, "profile": "inventory"} if WORLD.running else None,

@@ -47,6 +47,7 @@ export const api = {
   saveRfid: (revision, settings) => request("PUT", "api/rfid", { revision, settings }),
   rfidStart: (preset) => request("POST", "api/rfid/start", { preset }),
   rfidStop: () => request("POST", "api/rfid/stop", {}),
+  rfidPreset: (id) => request("GET", "api/rfid/preset?id=" + encodeURIComponent(id)),
   saveMqtt: (revision, settings) => request("PUT", "api/mqtt", { revision, settings }),
   testMqtt: (settings) => request("POST", "api/mqtt/test", { settings }),
   siteSettings: () => request("GET", "api/site-settings"),

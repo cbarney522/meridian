@@ -7,8 +7,9 @@ the tag stream, and turns raw reads into tag_enter / tag_exit events per zone.
     RfidEngine     threads: stream reader (auto-reconnect), sweeper, status poll, auto-start
 
 Meridian starts a preset that's already saved on the reader (create and tune presets in the
-Impinj web UI: antennas, power, session, search mode). The preset should report every read
-(reporting interval 0), so a tag that stops being read can be detected as gone.
+Impinj web UI: antennas, power, session, search mode). It reads each preset's configuration and
+adapts: a preset that reports each tag once per N seconds gets "arrived after 1 report" and
+"gone after 2N+2 s". A running preset is stopped before another is started.
 Standard library only.
 """
 import base64
@@ -232,10 +233,19 @@ class TagTracker:
         with self.lock:
             self.s = dict(DEFAULTS, **settings)
             self.min_exit_s = getattr(self, "min_exit_s", 0)
+            self.report_interval_s = getattr(self, "report_interval_s", 0)
 
     def exit_timeout(self):
-        """'Gone after', stretched while a firing pattern runs so tags read only by some steps don't flap."""
-        return max(self.s["exit_timeout_s"], self.min_exit_s)
+        """'Gone after', stretched while a firing pattern runs (tags read only by some steps) and when
+        the running preset reports each tag only once per interval instead of on every read."""
+        t = max(self.s["exit_timeout_s"], self.min_exit_s)
+        if self.report_interval_s > 0:
+            t = max(t, 2 * self.report_interval_s + 2)
+        return t
+
+    def enter_reads(self):
+        # a preset that reports each tag once per interval: one report is all we'll get
+        return 1 if self.report_interval_s > 0 else self.s["enter_reads"]
 
     def zone_for(self, port):
         z = self.s["zones"].get(str(port))
@@ -268,7 +278,7 @@ class TagTracker:
                     p = self.pending[epc] = [zone, port, 0, now, now, rssi]
                 p[2] += 1
                 p[4], p[1], p[5] = now, port, rssi
-                if p[2] >= s["enter_reads"]:
+                if p[2] >= self.enter_reads():
                     del self.pending[epc]
                     self.tags[epc] = tag = _Tag(epc, zone, port, now, rssi, p[2])
                     tag.first = p[3]                      # dwell counts from the first read
@@ -285,7 +295,7 @@ class TagTracker:
                 tag.cand_n += 1
             else:
                 tag.cand, tag.cand_n = zone, 1
-            if tag.cand_n >= s["enter_reads"] and now - tag.last_in_zone >= s["move_quiet_s"]:
+            if tag.cand_n >= self.enter_reads() and now - tag.last_in_zone >= s["move_quiet_s"]:
                 old = tag.zone
                 out.append(("tag_exit", {"epc": epc, "zone": old, "antenna": tag.antenna,
                                          "dwell_s": round(now - tag.first, 1), "reason": "moved", "to_zone": zone}))
@@ -333,6 +343,48 @@ class TagTracker:
                     "tags": [{"epc": t.epc, "zone": t.zone, "antenna": t.antenna, "rssi_dbm": t.rssi,
                               "reads": t.reads, "first_seen": round(t.first, 1), "last_seen": round(t.last, 1),
                               "seen_ago_s": round(now - t.last, 1)} for t in tags]}
+
+
+# ---------------------------------------------------------------- preset inspection
+def _find(obj, key):
+    """First value of key (case-insensitive) anywhere in nested dicts/lists."""
+    key = key.lower()
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k.lower() == key:
+                return v
+        for v in obj.values():
+            r = _find(v, key)
+            if r is not None:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _find(v, key)
+            if r is not None:
+                return r
+    return None
+
+
+def preset_summary(raw):
+    """What matters to Meridian in a preset's configuration (names matched loosely)."""
+    out = {"antennas": [], "report_interval_s": None, "search_mode": None, "session": None, "power_dbm": {}}
+    ants = _find(raw, "antennaConfigs")
+    for a in ants if isinstance(ants, list) else []:
+        if isinstance(a, dict):
+            port = _find(a, "antennaPort")
+            if isinstance(port, int):
+                out["antennas"].append(port)
+                pw = _find(a, "transmitPowerCdbm")
+                if isinstance(pw, (int, float)):
+                    out["power_dbm"][str(port)] = round(pw / 100, 1)
+            out["search_mode"] = out["search_mode"] or _find(a, "inventorySearchMode")
+            sess = _find(a, "inventorySession")
+            out["session"] = out["session"] if out["session"] is not None else sess
+    ri = _find(raw, "reportingIntervalSeconds")
+    if isinstance(ri, (int, float)):
+        out["report_interval_s"] = float(ri)
+    out["antennas"] = sorted(set(out["antennas"]))
+    return out
 
 
 # ---------------------------------------------------------------- reader control
@@ -387,6 +439,7 @@ class RfidEngine:
         self.stream_lines = 0
         self.last_other = collections.deque(maxlen=10)   # unrecognised events, for diagnostics
         self._stop = threading.Event()
+        self.preset_info = {}            # preset id -> {"summary", "raw", "error"}
         self.pattern = None              # live state of a running firing pattern
         self._pattern_cancel = None
         self._pattern_lock = threading.Lock()
@@ -402,6 +455,35 @@ class RfidEngine:
         self.tracker.configure(self.settings)
 
     # -- control
+    def inspect_preset(self, pid, fresh=False):
+        """Read a preset's configuration from the reader (cached)."""
+        if not fresh and pid in self.preset_info and not self.preset_info[pid].get("error"):
+            return self.preset_info[pid]
+        try:
+            raw = self.control.preset(pid)
+            info = {"summary": preset_summary(raw), "raw": raw, "error": None}
+        except (ApiError, OSError, ValueError) as e:
+            info = {"summary": None, "raw": None, "error": str(e)}
+        self.preset_info[pid] = info
+        return info
+
+    def _report_interval(self, pids):
+        """Longest reporting interval among the presets about to run (0 = reports every read)."""
+        worst = 0.0
+        for pid in pids:
+            summ = self.inspect_preset(pid).get("summary") or {}
+            worst = max(worst, summ.get("report_interval_s") or 0.0)
+        return worst
+
+    def _start_preset(self, pid):
+        """Start a preset, stopping whatever is running first (the reader may refuse otherwise)."""
+        try:
+            if self.control.status().get("running"):
+                self.control.stop()
+        except (ApiError, OSError, ValueError):
+            pass
+        self.control.start(pid)
+
     def find_pattern(self, sel):
         pid = sel[len(PATTERN_PREFIX):] if sel.startswith(PATTERN_PREFIX) else sel
         return next((p for p in self.settings.get("patterns", []) if p["id"] == pid or p["name"] == pid), None)
@@ -418,7 +500,8 @@ class RfidEngine:
                 raise ValueError(f"No firing pattern “{sel[len(PATTERN_PREFIX):]}”.")
             self._start_pattern(pattern)
             return sel
-        self.control.start(sel)
+        self.tracker.report_interval_s = self._report_interval([sel])
+        self._start_preset(sel)
         log.info("inventory started with preset %s", sel)
         self.refresh_status()
         return sel
@@ -426,6 +509,7 @@ class RfidEngine:
     def stop_inventory(self):
         self._cancel_pattern()
         self.control.stop()
+        self.tracker.report_interval_s = 0
         log.info("inventory stopped")
         self.refresh_status()
         # everything currently in the field is now unknown; report it gone
@@ -436,7 +520,8 @@ class RfidEngine:
     def _start_pattern(self, pattern):
         # check the first step's preset is accepted before going to the background (errors reach the user)
         first = pattern["steps"][0]
-        self.control.start(first["preset"])
+        self.tracker.report_interval_s = self._report_interval([st["preset"] for st in pattern["steps"]])
+        self._start_preset(first["preset"])
         cancel = threading.Event()
         with self._pattern_lock:
             self._pattern_cancel = cancel
@@ -484,6 +569,7 @@ class RfidEngine:
                     self._pattern_cancel = None
                     self.pattern = None
                     self.tracker.min_exit_s = 0
+                    self.tracker.report_interval_s = 0
             self.refresh_status()
 
     def _pattern_update(self, **kw):
@@ -596,7 +682,10 @@ class RfidEngine:
     def status(self):
         snap = self.tracker.snapshot()
         pattern = self.pattern_status()
-        return {"available": True, "running": bool(self.reader.get("running")) or pattern is not None,
+        tr = self.tracker
+        return {"effective": {"enter_reads": tr.enter_reads(), "exit_timeout_s": tr.exit_timeout(),
+                              "report_interval_s": tr.report_interval_s},
+                "available": True, "running": bool(self.reader.get("running")) or pattern is not None,
                 "pattern": pattern, "reader_status": self.reader.get("status"),
                 "active_preset": self.reader.get("active_preset"), "reader_error": self.reader_error,
                 "stream_connected": self.stream_connected, "stream_error": self.stream_error,

@@ -103,6 +103,24 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(s["read_rate"], 4.0)
 
 
+class AdaptTests(unittest.TestCase):
+    def test_interval_preset(self):
+        t = rfid.TagTracker(dict(rfid.DEFAULTS, exit_timeout_s=5, enter_reads=2))
+        t.report_interval_s = 10                    # preset reports each tag once per 10 s
+        self.assertEqual((t.enter_reads(), t.exit_timeout()), (1, 22))
+        self.assertEqual(t.read(EPC, 1, -5000, now=0)[0][0], "tag_enter")   # one report is enough
+        self.assertEqual(t.sweep(now=15), [])                                  # not gone between reports
+        self.assertEqual(t.sweep(now=23)[0][0], "tag_exit")
+
+    def test_summary(self):
+        raw = {"eventConfig": {"tagInventory": {"tagReporting": {"reportingIntervalSeconds": 3}}},
+               "antennaConfigs": [{"antennaPort": 2, "transmitPowerCdbm": 3000, "inventorySearchMode": "dual-target",
+                                   "inventorySession": 2}, {"antennaPort": 1}]}
+        self.assertEqual(rfid.preset_summary(raw), {"antennas": [1, 2], "report_interval_s": 3.0, "search_mode": "dual-target",
+                                                    "session": 2, "power_dbm": {"2": 30.0}})
+        self.assertEqual(rfid.preset_summary({})["antennas"], [])
+
+
 class ValidateTests(unittest.TestCase):
     def test_validate(self):
         s, e = rfid.validate({"zones": {"1": "portal", "2": "", "3": "drawer 1"}, "rssi_min_dbm": "-65", "epc_prefix": "e280"}, {})
@@ -136,6 +154,9 @@ class FakeReader(BaseHTTPRequestHandler):
         st = self.state
         if self.path == "/api/v1/profiles/inventory/presets":
             return self.reply(200, ["default", "crib-portal"])
+        if self.path == "/api/v1/profiles/inventory/presets/default":
+            return self.reply(200, {"eventConfig": {"tagInventory": {"tagReporting": {"reportingIntervalSeconds": 4}}},
+                                    "antennaConfigs": [{"antennaPort": 1}]})
         if self.path == "/api/v1/status":
             return self.reply(200, {"status": "running" if st["running"] else "idle",
                                     "activePreset": {"id": st["preset"]} if st["running"] else None})
@@ -218,6 +239,16 @@ class EngineTests(unittest.TestCase):
             self.eng.start_inventory("nope")
         self.assertIn("Preset not found", str(cm.exception))
 
+    def test_switch_stops_first_and_adapts(self):
+        self.assertTrue(self.wait(lambda: self.eng.status()["running"]), "auto-start")
+        self.state["calls"].clear()
+        self.eng.start_inventory("default")
+        self.assertEqual([(c[1], c[2]) for c in self.state["calls"]], [("stop", None), ("start", "default")])
+        eff = self.eng.status()["effective"]
+        self.assertEqual((eff["report_interval_s"], eff["enter_reads"], eff["exit_timeout_s"]), (4, 1, 10))
+        self.eng.stop_inventory()
+        self.assertEqual(self.eng.status()["effective"]["report_interval_s"], 0)
+
     def test_stop_reports_tags_gone(self):
         self.assertTrue(self.wait(lambda: self.eng.stream_connected))
         self.state["lines"] += [tag_line(EPC2), tag_line(EPC2)]
@@ -242,6 +273,9 @@ class PatternTests(EngineTests):
         pass
 
     def test_stop_reports_tags_gone(self):
+        pass
+
+    def test_switch_stops_first_and_adapts(self):
         pass
 
     def test_runs_steps_once(self):

@@ -725,6 +725,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
             return
+        if p == "/api/rfid/preset":
+            if self.require("rfid.view"):
+                pid = (parse_qs(urlparse(self.path).query).get("id") or [""])[0]
+                if not pid:
+                    return self.send_json({"error": "bad_request"}, 400)
+                self.send_json({"id": pid, **APP.rfid.inspect_preset(pid, fresh=True)})
+            return
         if p == "/api/rfid":
             if self.require("rfid.view"):
                 self.send_json(APP.rfid_view(refresh="refresh=1" in (urlparse(self.path).query or "")))

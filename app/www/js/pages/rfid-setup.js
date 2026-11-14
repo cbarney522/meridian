@@ -29,7 +29,8 @@ export function render(root, ctx) {
     try {
       const d = await api.rfid(refresh);
       state.data = d;
-      if (rebuild || !state.form) { state.form = clone(d.settings); buildInventory(); drawForms(); changed(); }
+      if (rebuild || !state.form) { state.form = clone(d.settings); buildInventory(); drawForms(); changed(); showPresetInfo(); }
+      if (refresh) { for (const k of Object.keys(presetCache)) delete presetCache[k]; showPresetInfo(); }
       drawInventory(); drawZoneCounts();
     } catch (err) { fill(invCard, h("div", { class: "notice bad" }, "Can't load RFID settings: ", errText(err))); }
   }
@@ -44,7 +45,8 @@ export function render(root, ctx) {
     inv.stepDt = h("dt", {}, "Step"); inv.step = h("dd");
     inv.error = h("div");
     inv.sel = h("select", { disabled: !canEdit, "aria-label": "Preset" });
-    inv.sel.addEventListener("change", () => { f.preset = inv.sel.value; changed(); });
+    inv.sel.addEventListener("change", () => { f.preset = inv.sel.value; changed(); showPresetInfo(); });
+    inv.info = h("div", { class: "preset-info" });
     inv.presetsKey = null;
     const auto = h("input", { type: "checkbox", checked: f.auto_start, disabled: !canEdit });
     auto.addEventListener("change", () => { f.auto_start = auto.checked; changed(); });
@@ -67,12 +69,44 @@ export function render(root, ctx) {
         h("dt", {}, "Reads / s"), inv.rate, h("dt", {}, "Tags in field"), inv.count),
       inv.error,
       h("div", { class: "field", style: { marginTop: "12px" } }, h("span", { class: "field-label" }, "Preset"),
-        h("div", { class: "actions" }, inv.sel, inv.refresh),
+        h("div", { class: "actions" }, inv.sel, inv.refresh), inv.info,
         h("span", { class: "field-help" }, "Presets are created and tuned (antennas, power, search mode) in the ",
           h("a", { href: impinjUi, target: "_blank", rel: "noopener noreferrer" }, "Impinj web UI ↗"),
-          " under Profile Presets. Use a reporting interval of 0 so every read is reported.")),
+          " under Profile Presets. Any reporting interval works: Meridian adapts its arrival and departure timing to each preset.")),
       h("label", { class: "radio", style: { marginTop: "8px" } }, auto, h("span", {}, "Start this preset automatically when the reader starts")),
       h("div", { class: "actions", style: { marginTop: "12px" } }, inv.start, inv.stop));
+  }
+
+  // what the selected preset (or each preset of a pattern) does, read from the reader
+  const presetCache = {};
+  async function showPresetInfo() {
+    const f = state.form, sel = f.preset || "";
+    const pat = (f.patterns || []).find((p) => PATTERN + p.id === sel);
+    const ids = pat ? [...new Set(pat.steps.map((st) => st.preset))] : sel ? [sel] : [];
+    if (!ids.length) return fill(inv.info);
+    fill(inv.info, h("span", { class: "muted" }, "Reading preset settings…"));
+    const infos = await Promise.all(ids.map(async (id) => {
+      if (!presetCache[id]) {
+        try { presetCache[id] = await api.rfidPreset(id); } catch (err) { presetCache[id] = { id, error: errText(err) }; }
+      }
+      return presetCache[id];
+    }));
+    if ((state.form.preset || "") !== sel) return;          // selection changed meanwhile
+    fill(inv.info, infos.map((i) => presetLine(i, ids.length > 1)));
+  }
+  function presetLine(i, named) {
+    const label = named ? h("b", {}, i.id, ": ") : null;
+    if (i.error || !i.summary) return h("div", { class: "preset-line" }, label, h("span", { class: "muted" }, "Couldn't read this preset's settings", i.error ? ` (${i.error})` : "", "."));
+    const sm = i.summary, ri = sm.report_interval_s || 0;
+    const ants = sm.antennas.length ? `Antennas ${sm.antennas.join(", ")}` : "No antennas listed";
+    const power = Object.keys(sm.power_dbm).length ? ` · ${[...new Set(Object.values(sm.power_dbm))].map((d) => d + " dBm").join(" / ")}` : "";
+    const zoned = Object.keys(state.form.zones || {}).filter((p) => (state.form.zones[p] || "").trim());
+    const noZone = state.form.ignore_unzoned && sm.antennas.length && !sm.antennas.some((a) => zoned.includes(String(a)));
+    return h("div", { class: "preset-line" }, label, ants, power, sm.search_mode ? ` · ${sm.search_mode}` : "", " · ",
+      ri > 0 ? h("span", { class: "warn-text" }, `reports each tag once every ${ri} s`) : "reports every read",
+      ri > 0 ? h("div", { class: "muted" }, `Meridian adapts while it runs: a tag counts as arrived after 1 report, and gone after ${2 * ri + 2} s without one.`) : null,
+      noZone ? h("div", { class: "bad-text" }, "None of these antennas has a zone name, and “Ignore antennas without a zone name” is ticked, so every read is ignored.") : null,
+      h("details", {}, h("summary", {}, "Settings as the reader reports them"), h("pre", { class: "mono sample" }, JSON.stringify(i.raw, null, 2))));
   }
 
   function drawInventory() {
@@ -114,6 +148,12 @@ export function render(root, ctx) {
     inv.start.disabled = !canEdit || state.busy || !f.preset;
     inv.stop.disabled = !canEdit || state.busy || !s.running;
     inv.refresh.disabled = state.busy;
+    const eff = s.effective;
+    if (inv.effective && eff) {
+      const adj = eff.report_interval_s > 0 || eff.exit_timeout_s !== Number(state.data.settings.exit_timeout_s);
+      fill(inv.effective, "In effect now: arrived after ", h("b", {}, String(eff.enter_reads)), eff.enter_reads === 1 ? " read" : " reads",
+        ", gone after ", h("b", {}, `${eff.exit_timeout_s} s`), adj ? " (adjusted for the running preset or pattern)." : ".");
+    }
   }
 
   async function act(fn, ok) {
@@ -147,7 +187,8 @@ export function render(root, ctx) {
       el.addEventListener("input", () => { f[key] = el.value; changed(); });
       return h("label", { class: "field" }, h("span", { class: "field-label" }, label), el, h("span", { class: "field-help" }, help));
     };
-    fill(trackCard, h("h2", {}, "Arrived / left detection"),
+    inv.effective = h("p", { class: "hint" });
+    fill(trackCard, h("h2", {}, "Arrived / left detection"), inv.effective,
       h("div", { class: "form-grid" },
         num("enter_reads", "Reads to confirm arrival", "A tag counts as arrived after this many reads. Filters out stray reads from passing tags."),
         num("exit_timeout_s", "Gone after (seconds)", "A tag not read for this long has left. Raise it if tags at the edge of the field flicker in and out."),

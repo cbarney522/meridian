@@ -4,7 +4,7 @@
 # 4-part version, each 0-255. build.sh names the .upgx from this and writes it into app/VERSION.
 # Numbering (Cliff, Nov 2026): bump only the last part for each build, 0.1.3.1 ... 0.1.3.50, then
 # 0.1.4.0, and so on. The commercial launch will be 1.0.0.0, so keep the minor numbers low.
-Version = 0.1.3.1
+Version = 0.1.3.2
 
 # R*** = any reader. Use R700V2 to restrict to v2 hardware (the bundled Python is aarch64 only).
 Valid Reader Hardware = R***

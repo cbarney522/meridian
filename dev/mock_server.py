@@ -706,6 +706,11 @@ class Handler(SimpleHTTPRequestHandler):
             if self.require("system.view"):
                 self.send_json(mock_time())
             return
+        if p == "/api/rfid/preset":
+            if self.require("rfid.view"):
+                pid = (parse_qs(url.query).get("id") or [""])[0]
+                self.send_json({"id": pid, **RFID.inspect_preset(pid, fresh=True)})
+            return
         if p == "/api/rfid":
             if self.require("rfid.view"):
                 if "refresh=1" in (url.query or "") or not RFID.presets_cache:
