@@ -12,7 +12,6 @@ Standard library only.
     python3 server.py --data-dir /tmp/m --sysfs /tmp/fake/sys --insecure-http --port 8080   # bench
 """
 import argparse
-import base64
 import collections
 import json
 import logging
@@ -25,6 +24,7 @@ import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import CookieError, SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +34,7 @@ from core import badges, storage, usb  # noqa: E402
 from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
+from core.sessions import Sessions, Throttle  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
 
 WWW_DIR = os.path.join(APP_DIR, "www")
@@ -99,7 +100,8 @@ class App:
         self.bus = Bus()
         self.sysfs = args.sysfs
         self.badges = None
-        self.failed = {}            # ip -> (count, last) login throttling
+        self.sessions = Sessions(idle=args.session_idle * 60, absolute=12 * 3600)
+        self.throttle = Throttle(limit=5, window=300, lockout=60)
         self.write_checks = {}      # mount point -> (time, error or None); re-tested every 60 s
         self.started = time.time()
 
@@ -326,6 +328,8 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "Meridian"
     sys_version = ""
     account = None
+    token = None
+    COOKIE = "meridian_session"
 
     def log_message(self, fmt, *args):
         log.debug("%s %s", self.client_address[0], fmt % args)
@@ -344,28 +348,59 @@ class Handler(BaseHTTPRequestHandler):
     def not_built(self, what):
         self.send_json({"error": "not_implemented", "details": [f"{what} isn't available in this build yet."]}, 501)
 
-    # -- auth: HTTP Basic against auth.json, with throttling
+    # -- auth: session cookie issued by POST /api/login
+    def session_token(self):
+        try:
+            c = SimpleCookie(self.headers.get("Cookie", ""))
+        except CookieError:
+            return None
+        m = c.get(self.COOKIE)
+        return m.value if m else None
+
     def authenticate(self):
-        ip = self.client_address[0]
-        count, last = APP.failed.get(ip, (0, 0))
-        if count >= 5 and time.time() - last < 30:
-            self.send_json({"error": "locked", "details": ["Too many failed logins; wait 30 seconds."]}, 429)
-            return False
-        hdr = self.headers.get("Authorization", "")
-        if hdr.startswith("Basic "):
-            try:
-                user, _, pw = base64.b64decode(hdr[6:]).decode().partition(":")
-                acct = APP.store.authenticate(user, pw)
-                if acct:
-                    APP.failed.pop(ip, None)
-                    self.account = acct
-                    return True
-            except (ValueError, UnicodeDecodeError):
-                pass
-            APP.failed[ip] = (count + 1, time.time())
-        self.send_json({"error": "authentication required"}, 401,
-                       {"WWW-Authenticate": 'Basic realm="Meridian", charset="UTF-8"'})
+        token = self.session_token()
+        user = APP.sessions.user_for(token)
+        acct = APP.store.account(user) if user else None
+        if acct:
+            self.account, self.token = acct, token
+            return True
+        if user:                                   # account deleted since sign-in
+            APP.sessions.drop(token)
+        self.send_json({"error": "not_signed_in", "details": ["Please sign in."]}, 401)
         return False
+
+    def cookie(self, value, max_age):
+        secure = "" if APP.args.insecure_http else "; Secure"
+        return f"{self.COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
+
+    def login(self):
+        try:
+            body = self.read_json()
+        except (ValueError, json.JSONDecodeError):
+            return self.send_json({"error": "bad_request"}, 400)
+        user, pw = body.get("user"), body.get("password")
+        if not isinstance(user, str) or not isinstance(pw, str) or not user or len(user) > 64 or len(pw) > 256:
+            return self.send_json({"error": "invalid", "details": ["Enter your user name and password."]}, 400)
+        ip, ukey = "ip:" + self.client_address[0], "user:" + user.lower()
+        wait = APP.throttle.locked(ip, ukey)
+        if wait:
+            return self.send_json({"error": "locked", "details": [f"Too many failed sign-ins. Try again in {wait} seconds."]}, 429)
+        acct = APP.store.authenticate(user, pw)
+        if not acct:
+            APP.throttle.fail(ip, ukey)
+            log.warning("failed sign-in for %r from %s", user, self.client_address[0])
+            return self.send_json({"error": "bad_credentials", "details": ["Wrong user name or password."]}, 401)
+        APP.throttle.success(ip, ukey)
+        token = APP.sessions.create(user)
+        log.info("%s signed in from %s", user, self.client_address[0])
+        return self.send_json({"ok": True, "must_change_password": acct["must_change"]}, 200,
+                              {"Set-Cookie": self.cookie(token, 12 * 3600)})
+
+    def logout(self):
+        token = self.session_token()
+        if token:
+            APP.sessions.drop(token)
+        return self.send_json({"ok": True}, 200, {"Set-Cookie": self.cookie("", 0)})
 
     def can(self, perm):
         return APP.access.can(self.account["role"], perm)
@@ -377,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def same_origin(self):
-        # Browsers resend Basic credentials automatically, so refuse cross-site writes.
+        # Defence in depth next to SameSite=Strict: refuse writes sent from another site.
         origin = self.headers.get("Origin")
         if origin and urlparse(origin).netloc != self.headers.get("Host"):
             self.send_json({"error": "cross-origin request refused"}, 403)
@@ -395,12 +430,14 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self):
-        if not self.authenticate():
-            return
         url = urlparse(self.path)
         p = url.path
         if not p.startswith("/api/"):
-            return self.static(p)
+            return self.static(p)          # page files are public; all data comes from the API
+        if p == "/api/login-info":        # shown on the sign-in page
+            return self.send_json({"reader": socket.gethostname(), "app_version": app_version()})
+        if not self.authenticate():
+            return
         role = self.account["role"]
         if p == "/api/session":
             r = APP.access.roles.get(role, {"label": role})
@@ -447,7 +484,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"error": "not_found"}, 404)
 
     def do_PUT(self):
-        if not self.authenticate() or not self.same_origin():
+        if not self.same_origin() or not self.authenticate():
             return
         p = urlparse(self.path).path
         handlers = {
@@ -472,9 +509,15 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(result, status)
 
     def do_POST(self):
-        if not self.authenticate() or not self.same_origin():
-            return
         p = urlparse(self.path).path
+        if not self.same_origin():
+            return
+        if p == "/api/login":
+            return self.login()
+        if p == "/api/logout":
+            return self.logout()
+        if not self.authenticate():
+            return
         try:
             body = self.read_json()
         except (ValueError, json.JSONDecodeError):
@@ -483,6 +526,7 @@ class Handler(BaseHTTPRequestHandler):
             err = APP.store.change_password(self.account["user"], body.get("current", ""), body.get("new", ""))
             if err:
                 return self.send_json({"error": "invalid", "details": [err]}, 400)
+            APP.sessions.drop_user(self.account["user"], keep=self.token)   # sign out their other sessions
             log.info("%s changed their password", self.account["user"])
             return self.send_json({"ok": True})
         if p == "/api/badges/preview":
@@ -570,6 +614,8 @@ def main():
     ap.add_argument("--proc-mounts", default="/proc/mounts")
     ap.add_argument("--no-badges", action="store_true", help="don't read badge readers")
     ap.add_argument("--insecure-http", action="store_true", help="plain HTTP (bench use only)")
+    ap.add_argument("--session-idle", type=int, default=int(os.environ.get("MERIDIAN_SESSION_IDLE_MIN", "30")),
+                    help="minutes without activity before a sign-in expires")
     ap.add_argument("--log-level", default=os.environ.get("UI_LOG_LEVEL", "INFO"))
     args = ap.parse_args()
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")

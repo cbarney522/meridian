@@ -4,15 +4,32 @@ The UI talks only to these endpoints. `dev/mock_server.py` implements them with 
 the CAP's server must implement them identically. All responses are JSON unless noted.
 Errors: `{"error": "<code>", ...}` with HTTP 400 / 403 / 404.
 
-On the reader every request (pages and API) needs HTTP Basic credentials from `auth.json`;
-5 failed logins from one address lock it out for 30 s (`429`). Writes from another origin are
-refused (`403`). Endpoints for parts not built yet answer
+On the reader, page files (HTML/CSS/JS) are public; every `/api/` call except `login-info`,
+`login` and `logout` needs a **session cookie** (`meridian_session`: random token, `HttpOnly`,
+`Secure`, `SameSite=Strict`). Without one the API answers
+`401 {"error": "not_signed_in"}` and the UI goes to `login.html#<route>`. Sessions end after
+30 minutes idle (`--session-idle`), 12 hours after sign-in, on sign-out, or when the server
+restarts. Writes from another origin are refused (`403`). Endpoints for parts not built yet answer
 `501 {"error": "not_implemented", "details": ["... isn't available in this build yet."]}`
 (currently: `/api/site/readers`, `/api/storage/eject|mount|format`). `/api/status` reports
 `rfid.available: false` and `mqtt.available: false` until the engine exists, and unknown values as `null`.
 
 Every endpoint except `/api/session` checks a permission server-side. A `403` body includes
 `"needs": "<permission>"`.
+
+## Sign-in
+
+### `GET /api/login-info` — public
+`{"reader": "<hostname>", "app_version": "0.1.0.6"}` for the sign-in page.
+
+### `POST /api/login` — public
+`{"user": "admin", "password": "..."}` → `200 {"ok": true, "must_change_password": true}` with
+`Set-Cookie: meridian_session=...` · `401 {"error": "bad_credentials"}` ·
+`429 {"error": "locked"}` after 5 failures in 5 minutes from one address **or** for one user name
+(locked for 60 s).
+
+### `POST /api/logout`
+Ends the session and clears the cookie. `200 {"ok": true}`.
 
 ## Session and navigation
 
@@ -33,8 +50,8 @@ password is in use) and `app_version`.
 
 ### `POST /api/account/password` — any signed-in user
 `{"current": "...", "new": "..."}` → `200 {"ok": true}` · `400 {"details": ["..."]}`
-(at least 8 characters, not the default or the user name). With Basic auth the browser then
-asks for the new password on the next request.
+(at least 8 characters, not the default or the user name). The current session stays signed in;
+the user's other sessions are signed out.
 
 ### `GET /api/menu`
 `menu.json` filtered to the caller's permissions. Groups and menus with nothing visible are removed.
@@ -209,6 +226,9 @@ drive between ext4 and vfat. `GET /api/storage` also returns `dev_fs_type` in th
 ### `POST /api/dev/usb/toggle` `{"port": "1-1.2"}`
 Simulates unplugging / replugging a port (and anything behind it). `GET /api/usb/devices` also
 returns `dev_unplugged` in the mock. Not implemented by the real server.
+
+### `POST /api/login` / `/api/logout` (mock)
+Always succeed; the mock has no accounts.
 
 ### `POST /api/dev/role` `{"role": "supervisor"}`
 Switches the mock server's current role. Not implemented by the real server.

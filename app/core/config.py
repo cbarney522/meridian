@@ -146,6 +146,13 @@ class Store:
             return {"user": user, "role": rec["role"], "must_change": rec.get("must_change", False)}
         return None
 
+    def account(self, user):
+        """Current role and flags for a signed-in user (looked up per request so changes apply at once)."""
+        rec = self._accounts()["users"].get(user)
+        if not rec:
+            return None
+        return {"user": user, "role": rec["role"], "must_change": rec.get("must_change", False)}
+
     def change_password(self, user, current, new):
         """Returns an error string, or None on success."""
         if not isinstance(new, str) or len(new) < MIN_PASSWORD:

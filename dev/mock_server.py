@@ -522,6 +522,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.path = "/index.html"
             return super().do_GET()
 
+        if p == "/api/login-info":
+            return self.send_json({"reader": "Crib 2 portal (mock)", "app_version": "0.1.0-dev"})
         role = STATE["role"]
         if p == "/api/session":
             r = ACCESS.roles[role]
@@ -577,6 +579,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path).path
+        if p in ("/api/login", "/api/logout"):   # MOCK-ONLY: no real accounts; any sign-in works
+            return self.send_json({"ok": True, "must_change_password": False})
         if p == "/api/dev/role":  # MOCK-ONLY role switcher
             try:
                 role = self.read_json().get("role")

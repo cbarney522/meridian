@@ -24,7 +24,7 @@ Output: `cap/meridian_<version>.upgx` (version from `cap/cap_description.in`).
 
 Install: reader web UI → upload the `.upgx` → **reboot the reader** (a new CAP doesn't start until
 then) → browse to `https://<reader>:8443/`, accept the self-signed certificate, sign in as
-`admin` / `changeme`, and change the password from the red banner.
+`admin` / `changeme` on the sign-in page, and change the password from the red banner.
 
 On the reader: settings, accounts, certificate and log live in `/cust/rw_dir`
 (`log/meridian.log`; `diag.txt` lists what the CAP can access — USB sysfs, `/dev/input`
@@ -70,8 +70,9 @@ app/                     → /cust/app on the reader
   core/config.py         settings sections + accounts in rw_dir (atomic writes, revisions)
   core/inputs.py         USB hot-plug watcher, badge-reader listener on /dev/input
   core/tls.py            per-reader self-signed certificate
+  core/sessions.py       sign-in sessions and login throttling
   www/                   the UI: plain HTML/CSS/JS ES modules, no build step
-    index.html
+    index.html, login.html
     css/meridian.css
     js/app.js            shell: session, menu, router, breadcrumb, live events
     js/menu.js           menu bar behaviour

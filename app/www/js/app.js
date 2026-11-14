@@ -126,6 +126,7 @@ async function boot() {
   try {
     await loadSession();
   } catch (err) {
+    if (err.status === 401) return;            // already on the way to the sign-in page
     $("page").replaceChildren(h("div", { class: "notice bad" },
       h("h1", {}, "Can't reach the reader"),
       h("p", {}, String(err.message || err))));
@@ -137,12 +138,16 @@ async function boot() {
     route();
   });
   $("pw-open").addEventListener("click", openPasswordDialog);
+  $("signout").addEventListener("click", async () => {
+    ctx.events.stop();
+    try { await api.logout(); } catch { /* going to the sign-in page either way */ }
+    location.replace("login.html");
+  });
   window.addEventListener("hashchange", route);
   route();
 }
 
-// Change-password dialog. With HTTP Basic auth the browser asks for the new password on the
-// next request, so we say so up front.
+// Change-password dialog. You stay signed in; other sessions for your account are signed out.
 function openPasswordDialog() {
   const cur = h("input", { type: "password", autocomplete: "current-password" });
   const nw = h("input", { type: "password", autocomplete: "new-password" });
@@ -165,8 +170,9 @@ function openPasswordDialog() {
     try {
       await api.changePassword(cur.value, nw.value);
       dlg.replaceChildren(h("h2", {}, "Password changed"),
-        h("p", {}, "Your browser will now ask you to sign in again with the new password."),
-        h("div", { class: "dialog-actions" }, h("button", { type: "button", class: "btn btn-primary", onclick: () => location.reload() }, "Sign in again")));
+        h("p", {}, "You're still signed in here. Any other sessions for your account have been signed out."),
+        h("div", { class: "dialog-actions" }, h("button", { type: "button", class: "btn btn-primary", onclick: () => dlg.close() }, "Done")));
+      $("pw-strip").hidden = true;
     } catch (e) {
       err.textContent = e.message; err.hidden = false;
     }

@@ -16,6 +16,11 @@ async function request(method, path, body) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(path, opts);
+  if (res.status === 401) {                   // signed out or session expired: go to the sign-in page
+    const back = location.hash.replace(/^#/, "");
+    location.replace("login.html" + (back ? "#" + encodeURIComponent(back) : ""));
+    throw new ApiError(401, { error: "not_signed_in" });
+  }
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
   if (!res.ok) throw new ApiError(res.status, data);
@@ -42,6 +47,7 @@ export const api = {
   routeCheck: (route) => request("GET", "api/route-check?route=" + encodeURIComponent(route)),
   setRole: (role) => request("POST", "api/dev/role", { role }),
   changePassword: (current, next) => request("POST", "api/account/password", { current, new: next }),
+  logout: () => request("POST", "api/logout", {}),
 };
 
 // Small DOM builder. Text always goes through textContent, never innerHTML,
