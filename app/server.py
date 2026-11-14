@@ -19,6 +19,7 @@ import logging
 import os
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -255,6 +256,52 @@ class App:
             return 409, {"error": "conflict"}
         return 200, {"ok": True, "revision": rev}
 
+    def storage_eject(self):
+        """Flush and unmount every mount of the data drive. On FW 10.4 the CAP runs as the
+        non-root 'cap' user, so the reader may refuse; the error is passed back verbatim."""
+        assign = self.usb_assignments()
+        port = next((p for p, a in assign.items() if a["role"] == "storage"), None)
+        dev = {d["port"]: d for d in usb.scan(self.sysfs)}.get(port) if port else None
+        if not dev:
+            return 409, {"error": "no_drive", "details": ["No data drive is plugged in."]}
+        mounts = storage.find_mounts(dev["nodes"], self.args.proc_mounts)
+        if not mounts:
+            return 409, {"error": "not_mounted", "details": ["The drive isn't mounted."]}
+        subprocess.run(["sync"], timeout=30, check=False)
+        errors = []
+        for m in sorted(mounts, key=lambda m: -len(m["mount_point"])):
+            try:
+                r = subprocess.run(["umount", m["mount_point"]], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as e:
+                errors.append(f"{m['mount_point']}: {e}")
+                continue
+            if r.returncode != 0:
+                errors.append((r.stderr or r.stdout or f"umount exit {r.returncode}").strip())
+        self.write_checks.clear()
+        if errors:
+            log.warning("eject failed: %s", "; ".join(errors))
+            return 409, {"error": "eject_failed", "details": ["The reader didn't allow unmounting: " + "; ".join(errors)
+                         + (" The drive is mounted with 'sync', so unplugging it is fairly safe." if any(m["sync"] for m in mounts) else "")]}
+        log.info("data drive on port %s ejected", port)
+        self.bus.emit("storage_changed", action="eject", port=port)
+        return 200, {"ok": True}
+
+    def ntp_synced(self):
+        """True/False from chronyc if available (cached 60 s); None if unknown."""
+        t, val = getattr(self, "_ntp", (0, None))
+        if time.time() - t < 60:
+            return val
+        val = None
+        try:
+            r = subprocess.run(["chronyc", "-n", "tracking"], capture_output=True, text=True, timeout=3)
+            for line in r.stdout.splitlines():
+                if line.startswith("Leap status"):
+                    val = line.split(":", 1)[1].strip() == "Normal"
+        except (OSError, subprocess.SubprocessError):
+            pass
+        self._ntp = (time.time(), val)
+        return val
+
     # -- diagnostics (developer tools)
     def diagnostics(self, log_bytes=65536):
         def read(path, tail=None):
@@ -286,7 +333,7 @@ class App:
         return {
             "reader": {"name": socket.gethostname(), "serial": None, "site": None, "firmware": None,
                        "app_version": app_version(), "profile": None,
-                       "uptime_s": int(read_first("/proc/uptime", float) or 0), "ntp_synced": None,
+                       "uptime_s": int(read_first("/proc/uptime", float) or 0), "ntp_synced": self.ntp_synced(),
                        "temp_c": round(temp / 1000, 1) if temp else None},
             "rfid": {"available": False, "running": False, "read_rate": 0, "tags_in_field": 0, "zones": {}},
             "mqtt": {"available": False, "connected": False, "outbox_depth": 0},
@@ -475,9 +522,19 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(raw, str) or len(raw) > 128:
                 return self.send_json({"error": "bad_request"}, 400)
             return self.send_json(badges.normalize(raw, merged))
-        if p in ("/api/storage/eject", "/api/storage/mount", "/api/storage/format"):
+        if p == "/api/storage/eject":
             if self.require("hardware.edit"):
-                self.not_built("Ejecting, mounting and formatting the drive")
+                status, result = APP.storage_eject()
+                self.send_json(result, status)
+            return
+        if p == "/api/storage/mount":
+            if self.require("hardware.edit"):
+                self.send_json({"error": "not_supported", "details": [
+                    "The reader mounts USB drives itself when they're plugged in. Unplug the drive and plug it back in."]}, 409)
+            return
+        if p == "/api/storage/format":
+            if self.require("hardware.edit"):
+                self.not_built("Formatting the drive")
             return
         return self.send_json({"error": "not_found"}, 404)
 

@@ -99,7 +99,9 @@ export function render(root, ctx) {
               ? h("button", { type: "button", class: "btn", onclick: () => act("eject") }, "Eject safely")
               : h("button", { type: "button", class: "btn", onclick: () => act("mount") }, "Mount"),
             h("button", { type: "button", class: "btn btn-danger", onclick: () => dialog.open() }, "Format as ext4…")),
-          h("p", { class: "hint" }, "Eject before unplugging so no write is cut off mid-way.")) : null,
+          h("p", { class: "hint" }, drv.mount && drv.mount.sync
+            ? "This reader mounts drives with 'sync' (every write goes straight to the drive), so unplugging is fairly safe; ejecting first is still best."
+            : "Eject before unplugging so no write is cut off mid-way.")) : null,
       ),
     );
     if (dev) fill(devBox, h("strong", {}, "Mock server: "),

@@ -10,6 +10,26 @@ import re
 RECOMMENDED_FS = "ext4"
 
 
+def find_mounts(device_names, proc_mounts="/proc/mounts"):
+    """Every mount whose source is one of device_names or a partition of them (the R700
+    mounts each stick twice: /run/media/disks/<id> and /run/mount/external/<id>)."""
+    out = []
+    try:
+        with open(proc_mounts, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        src, mnt, fs, opts = parts[:4]
+        if any(src == dev or (src.startswith(dev) and src[len(dev):].isdigit()) for dev in device_names):
+            out.append({"device": src, "mount_point": _unescape(mnt), "fs_type": fs,
+                        "read_only": "ro" in opts.split(","), "sync": "sync" in opts.split(",")})
+    return out
+
+
 def find_mount(device_names, proc_mounts="/proc/mounts"):
     """Return {"device", "mount_point", "fs_type", "read_only"} for the first mount whose source
     is one of device_names (e.g. ["/dev/sda", "/dev/sda1"]) or a partition of them; else None."""

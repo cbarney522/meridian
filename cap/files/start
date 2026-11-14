@@ -54,6 +54,10 @@ export PYTHONDONTWRITEBYTECODE=1    # never write .pyc into the read-only partit
     if (touch "$m/.meridian_probe" && rm -f "$m/.meridian_probe") 2>/dev/null; then echo "  $m: writable by $(id -un)"
     else echo "  $m: NOT writable by $(id -un)"; fi
   done
+  echo "--- serial devices"
+  ls -l /dev/ttyACM* /dev/ttyUSB* 2>&1
+  echo "--- time"
+  chronyc -n tracking 2>&1 | grep -E 'Reference|Leap|System time' || echo "  chronyc not usable"
   echo "--- thermal"
   cat /sys/class/thermal/thermal_zone*/temp 2>&1
 } > "$RW/diag.txt" 2>&1

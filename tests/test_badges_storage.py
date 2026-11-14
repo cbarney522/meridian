@@ -99,6 +99,13 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(storage.find_mount(["/dev/sdb"], self.mounts))
         self.assertIsNone(storage.find_mount(["/dev/sda"], os.path.join(self.tmp.name, "none")))
 
+    def test_find_mounts_all(self):
+        with open(self.mounts, "a") as f:
+            f.write("/dev/sda1 /run/mount/external/disk0 vfat rw,sync,relatime,gid=6 0 0\n")
+        ms = storage.find_mounts(["/dev/sda"], self.mounts)
+        self.assertEqual([m["mount_point"] for m in ms], ["/run/media/data drive", "/run/mount/external/disk0"])
+        self.assertEqual([m["sync"] for m in ms], [False, True])
+
     def test_capacity_and_dir_size(self):
         d = os.path.join(self.tmp.name, "data")
         os.makedirs(os.path.join(d, "sub"))
