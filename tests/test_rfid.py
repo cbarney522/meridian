@@ -117,7 +117,7 @@ class ValidateTests(unittest.TestCase):
 
 # ---------------------------------------------------------------- fake reader
 class FakeReader(BaseHTTPRequestHandler):
-    state = {"running": False, "preset": None, "lines": []}
+    state = {"running": False, "preset": None, "lines": [], "calls": []}
     stream_ready = threading.Event()
 
     def log_message(self, *a):
@@ -156,20 +156,23 @@ class FakeReader(BaseHTTPRequestHandler):
 
     def do_POST(self):
         st = FakeReader.state
-        if self.path == "/api/v1/profiles/inventory/presets/crib-portal/start":
-            st.update(running=True, preset="crib-portal")
-            return self.reply(204)
+        for pid in ("crib-portal", "default"):
+            if self.path == f"/api/v1/profiles/inventory/presets/{pid}/start":
+                st.update(running=True, preset=pid)
+                st["calls"].append((round(time.time(), 1), "start", pid))
+                return self.reply(204)
         if self.path.endswith("/start"):
             return self.reply(404, {"message": "Preset not found"})
         if self.path == "/api/v1/profiles/stop":
             st.update(running=False, preset=None)
+            st["calls"].append((round(time.time(), 1), "stop", None))
             return self.reply(204)
         self.reply(404, {"message": "no such thing"})
 
 
 class EngineTests(unittest.TestCase):
     def setUp(self):
-        FakeReader.state.update(running=False, preset=None, lines=[])
+        FakeReader.state.update(running=False, preset=None, lines=[], calls=[])
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeReader)
         self.srv.daemon_threads = True
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
@@ -220,6 +223,79 @@ class EngineTests(unittest.TestCase):
         self.eng.stop_inventory()
         self.assertEqual(self.eng.status()["tags_in_field"], 0)
         self.assertTrue(any(e[0] == "tag_exit" and e[1]["epc"] == EPC2 for e in self.events))
+
+
+class PatternTests(EngineTests):
+    PATTERN = {"id": "two", "name": "Two step", "continuous": False,
+               "steps": [{"preset": "crib-portal", "seconds": 1, "pause_s": 0.5},
+                         {"preset": "default", "seconds": 1, "pause_s": 0}]}
+
+    def setUp(self):
+        super().setUp()
+        self.eng.configure(dict(self.eng.settings, auto_start=False, patterns=[self.PATTERN]))
+        self.assertTrue(self.wait(lambda: self.eng.stream_connected))
+        FakeReader.state["calls"].clear()
+
+    def test_end_to_end(self):          # (inherited test not relevant here)
+        pass
+
+    def test_stop_reports_tags_gone(self):
+        pass
+
+    def test_runs_steps_once(self):
+        self.eng.start_inventory("pattern:two")
+        st = self.eng.status()
+        self.assertTrue(st["running"])
+        self.assertEqual((st["pattern"]["name"], st["pattern"]["step"], st["pattern"]["phase"]), ("Two step", 1, "scanning"))
+        self.assertGreater(self.eng.tracker.exit_timeout(), 3)        # stretched to a full cycle
+        self.assertTrue(self.wait(lambda: (self.eng.pattern_status() or {}).get("phase") == "pause", 3))
+        self.assertTrue(self.wait(lambda: (self.eng.pattern_status() or {}).get("step") == 2, 3))
+        self.assertTrue(self.wait(lambda: self.eng.pattern_status() is None, 4), "finishes when not continuous")
+        calls = [(c[1], c[2]) for c in FakeReader.state["calls"]]
+        self.assertEqual(calls, [("start", "crib-portal"), ("stop", None), ("start", "default"), ("stop", None)])
+        t = FakeReader.state["calls"]
+        self.assertGreaterEqual(t[2][0] - t[1][0], 0.4)               # the pause between steps
+        self.assertEqual(self.eng.tracker.exit_timeout(), 1)          # back to the setting
+
+    def test_continuous_until_stopped(self):
+        pat = dict(self.PATTERN, id="loop", name="Loop", continuous=True,
+                   steps=[{"preset": "crib-portal", "seconds": 1, "pause_s": 0}, {"preset": "default", "seconds": 1, "pause_s": 0}])
+        self.eng.configure(dict(self.eng.settings, patterns=[pat]))
+        self.eng.start_inventory("pattern:loop")
+        self.assertTrue(self.wait(lambda: (self.eng.pattern_status() or {}).get("cycle") == 2, 5))
+        self.eng.stop_inventory()
+        self.assertIsNone(self.eng.pattern_status())
+        self.assertFalse(self.eng.status()["running"])
+        n = len(FakeReader.state["calls"])
+        time.sleep(1.5)
+        self.assertEqual(len(FakeReader.state["calls"]), n, "no more steps after stop")
+
+    def test_bad_first_step_is_reported(self):
+        bad = dict(self.PATTERN, id="bad", name="Bad", steps=[{"preset": "nope", "seconds": 1, "pause_s": 0}] * 2)
+        self.eng.configure(dict(self.eng.settings, patterns=[bad]))
+        with self.assertRaises(ApiError):
+            self.eng.start_inventory("pattern:bad")
+        self.assertIsNone(self.eng.pattern_status())
+        with self.assertRaises(ValueError):
+            self.eng.start_inventory("pattern:missing")
+
+
+class PatternValidateTests(unittest.TestCase):
+    def test_validate(self):
+        good = {"name": "Portal then drawers", "continuous": True,
+                "steps": [{"preset": "LPR", "seconds": "5", "pause_s": "1"}, {"preset": "deep-scan", "seconds": 10}]}
+        s, e = rfid.validate({"patterns": [good], "preset": "pattern:portal-then-drawers"}, {})
+        self.assertEqual(e, [])
+        self.assertEqual(s["patterns"][0]["id"], "portal-then-drawers")
+        self.assertEqual(s["patterns"][0]["steps"][1], {"preset": "deep-scan", "seconds": 10.0, "pause_s": 0.0})
+        self.assertEqual(rfid.pattern_cycle_s(s["patterns"][0]), 16)
+        _, e = rfid.validate({"patterns": [{"name": "", "steps": [{"preset": "", "seconds": 0, "pause_s": -1}]},
+                                           {"name": "A", "steps": [{"preset": "x", "seconds": 1}] * 2},
+                                           {"name": "a", "steps": [{"preset": "x", "seconds": 1}] * 2}],
+                              "preset": "pattern:gone"}, {})
+        joined = " ".join(e)
+        for frag in ("give it a name", "choose a reader preset", "1–3600", "0–600", "at least two", "Two firing patterns", "no longer exists"):
+            self.assertIn(frag, joined)
 
 
 if __name__ == "__main__":

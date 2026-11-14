@@ -334,8 +334,8 @@ Defined in `app/defs/events.json` (also returned as `event_types` by `GET /api/m
 | Method | Path | Permission | Notes |
 |---|---|---|---|
 | GET | `/api/rfid[?refresh=1]` | rfid.view | `{revision, settings, status, presets}`. `refresh=1` re-reads the reader's preset list and status. |
-| PUT | `/api/rfid` | rfid.edit | `{revision, settings}`. settings: `auto_start`, `preset`, `zones` (`{"1": "portal", ...}`), `ignore_unzoned`, `exit_timeout_s` (1–600), `enter_reads` (1–50), `move_quiet_s` (0–30), `rssi_min_dbm` (-100–0 or null), `epc_prefix` (hex). Applies immediately. |
-| POST | `/api/rfid/start` | rfid.edit | `{preset?}` (default: the saved preset). 502 `reader` with the reader's message if it refuses. |
+| PUT | `/api/rfid` | rfid.edit | `{revision, settings}`. settings: `auto_start`, `preset`, `zones` (`{"1": "portal", ...}`), `ignore_unzoned`, `exit_timeout_s` (1–600), `enter_reads` (1–50), `move_quiet_s` (0–30), `rssi_min_dbm` (-100–0 or null), `epc_prefix` (hex), `patterns` (firing patterns, below). `preset` may be `pattern:<id>`. Applies immediately. |
+| POST | `/api/rfid/start` | rfid.edit | `{preset?}`: a reader preset id or `pattern:<id>` (default: the saved choice). 502 `reader` with the reader's message if it refuses. |
 | POST | `/api/rfid/stop` | rfid.edit | Stops inventory; tags in the field are reported gone. |
 
 status: `available`, `running`, `reader_status`, `active_preset`, `reader_error`, `stream_connected`, `stream_error`, `stream_lines`, `tags_in_field`, `read_rate` (reads/s over 5 s), `zones` (`{zone: count}`), `total_reads`, `ignored`, `tags` (`[{epc, zone, antenna, rssi_dbm, reads, first_seen, last_seen, seen_ago_s}]`, max 500). `/api/status` → `rfid` carries the summary fields.
@@ -343,3 +343,9 @@ status: `available`, `running`, `reader_status`, `active_preset`, `reader_error`
 Reader calls (Impinj IoT Device Interface, Basic auth with the login from About this reader): `GET /api/v1/profiles/inventory/presets`, `POST /api/v1/profiles/inventory/presets/{id}/start`, `POST /api/v1/profiles/stop`, `GET /api/v1/status`, and the long-lived `GET /api/v1/data/stream` (newline-delimited JSON; `tagInventoryEvent` with `epcHex` or base64 `epc`, `antennaPort`, `peakRssiCdbm`; `gpiTransitionEvent`). The stream reconnects automatically. Unrecognised stream events appear under `rfid_unrecognised_events` in `/api/diagnostics`.
 
 Tracking: a tag is *arrived* after `enter_reads` reads in a zone within `exit_timeout_s`; *left* when unread for `exit_timeout_s` (reason `gone`), or when another zone reads it `enter_reads` times after its own zone has been silent for `move_quiet_s` (reason `moved`, followed by `tag_enter` with `from_zone`). Zones come from antenna ports; unnamed antennas are "Antenna N" unless `ignore_unzoned`.
+
+### Firing patterns
+
+`settings.patterns`: `[{"id", "name", "continuous", "steps": [{"preset", "seconds", "pause_s"}]}]`. 2–20 steps, each a reader preset run for `seconds` (1–3600), then stopped, then `pause_s` (0–600) before the next step. `continuous` repeats the cycle until stopped; otherwise the pattern runs once and inventory ends. Names are unique; `id` is derived from the name if missing. Choose one with `preset: "pattern:<id>"` (also for auto-start), or over MQTT with `inventory` `args.pattern`.
+
+While a pattern runs, `status.pattern` is `{id, name, continuous, steps, step, preset, phase ("scanning" | "pause"), remaining_s, cycle, error}` and `running` is true (also during pauses). "Gone after" is stretched to at least one full cycle plus 2 s, so tags read only by some steps aren't reported as leaving between steps. A step the reader refuses is reported in `pattern.error` and the pattern carries on; if the first step is refused, starting fails with the reader's message.

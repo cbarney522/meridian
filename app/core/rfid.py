@@ -35,7 +35,9 @@ DEFAULTS = {
     "move_quiet_s": 1.0,         # old zone must be silent this long before a move is accepted
     "rssi_min_dbm": None,        # ignore weaker reads (e.g. -70)
     "epc_prefix": "",            # only track EPCs starting with this hex prefix
+    "patterns": [],              # firing patterns: [{"id","name","continuous","steps":[{"preset","seconds","pause_s"}]}]
 }
+PATTERN_PREFIX = "pattern:"      # a "preset" value naming a firing pattern instead of a reader preset
 ZONE_RE = re.compile(r"^[A-Za-z0-9 _\-]{1,32}$")
 HEX_RE = re.compile(r"^[0-9A-Fa-f]*$")
 
@@ -93,7 +95,63 @@ def validate(body, current):
     if not HEX_RE.match(prefix) or len(prefix) > 24:
         errors.append("EPC prefix: hex digits only (0-9, A-F), up to 24.")
     out["epc_prefix"] = prefix
+    out["patterns"] = _validate_patterns(body.get("patterns", out["patterns"]), errors)
+    sel = out["preset"]
+    if sel.startswith(PATTERN_PREFIX) and not any(p["id"] == sel[len(PATTERN_PREFIX):] for p in out["patterns"]):
+        errors.append("The selected firing pattern no longer exists; pick another preset or pattern.")
     return out, errors
+
+
+def _validate_patterns(patterns, errors):
+    if not isinstance(patterns, list):
+        errors.append("Firing patterns must be a list.")
+        return []
+    out, names, ids = [], set(), set()
+    for i, p in enumerate(patterns[:50]):
+        if not isinstance(p, dict):
+            errors.append(f"Firing pattern {i + 1} is invalid.")
+            continue
+        name = str(p.get("name") or "").strip()
+        label = f"Firing pattern “{name or i + 1}”"
+        if not name or len(name) > 40:
+            errors.append(f"Firing pattern {i + 1}: give it a name (up to 40 characters).")
+        elif name.lower() in names:
+            errors.append(f"Two firing patterns are called “{name}”.")
+        names.add(name.lower())
+        pid = str(p.get("id") or "").strip() or re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or f"p{i + 1}"
+        if not re.match(r"^[A-Za-z0-9_-]{1,40}$", pid) or pid in ids:
+            pid = f"p{i + 1}-{len(ids)}"
+        ids.add(pid)
+        steps_in = p.get("steps") if isinstance(p.get("steps"), list) else []
+        steps = []
+        for j, st in enumerate(steps_in[:20]):
+            st = st if isinstance(st, dict) else {}
+            preset = str(st.get("preset") or "").strip()
+            if not preset or preset.startswith(PATTERN_PREFIX):
+                errors.append(f"{label}, step {j + 1}: choose a reader preset.")
+            try:
+                secs = float(st.get("seconds"))
+                if not 1 <= secs <= 3600:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"{label}, step {j + 1}: scan time must be 1–3600 seconds.")
+                secs = 1.0
+            try:
+                pause = float(st.get("pause_s") or 0)
+                if not 0 <= pause <= 600:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"{label}, step {j + 1}: pause must be 0–600 seconds.")
+                pause = 0.0
+            steps.append({"preset": preset[:64], "seconds": secs, "pause_s": pause})
+        if len(steps) < 2:
+            errors.append(f"{label}: add at least two presets.")
+        out.append({"id": pid, "name": name[:40], "continuous": bool(p.get("continuous")), "steps": steps})
+    return out
+
+
+def pattern_cycle_s(pattern):
+    return sum(st["seconds"] + st["pause_s"] for st in pattern["steps"])
 
 
 # ---------------------------------------------------------------- stream parsing
@@ -173,6 +231,11 @@ class TagTracker:
     def configure(self, settings):
         with self.lock:
             self.s = dict(DEFAULTS, **settings)
+            self.min_exit_s = getattr(self, "min_exit_s", 0)
+
+    def exit_timeout(self):
+        """'Gone after', stretched while a firing pattern runs so tags read only by some steps don't flap."""
+        return max(self.s["exit_timeout_s"], self.min_exit_s)
 
     def zone_for(self, port):
         z = self.s["zones"].get(str(port))
@@ -201,7 +264,7 @@ class TagTracker:
             tag = self.tags.get(epc)
             if tag is None:
                 p = self.pending.get(epc)
-                if p is None or p[0] != zone or now - p[4] > s["exit_timeout_s"]:
+                if p is None or p[0] != zone or now - p[4] > self.exit_timeout():
                     p = self.pending[epc] = [zone, port, 0, now, now, rssi]
                 p[2] += 1
                 p[4], p[1], p[5] = now, port, rssi
@@ -236,7 +299,7 @@ class TagTracker:
         now = self.clock() if now is None else now
         out = []
         with self.lock:
-            limit = self.s["exit_timeout_s"]
+            limit = self.exit_timeout()
             for epc, tag in list(self.tags.items()):
                 if now - tag.last > limit:
                     del self.tags[epc]
@@ -324,6 +387,9 @@ class RfidEngine:
         self.stream_lines = 0
         self.last_other = collections.deque(maxlen=10)   # unrecognised events, for diagnostics
         self._stop = threading.Event()
+        self.pattern = None              # live state of a running firing pattern
+        self._pattern_cancel = None
+        self._pattern_lock = threading.Lock()
 
     # -- lifecycle
     def start_threads(self):
@@ -336,22 +402,110 @@ class RfidEngine:
         self.tracker.configure(self.settings)
 
     # -- control
+    def find_pattern(self, sel):
+        pid = sel[len(PATTERN_PREFIX):] if sel.startswith(PATTERN_PREFIX) else sel
+        return next((p for p in self.settings.get("patterns", []) if p["id"] == pid or p["name"] == pid), None)
+
     def start_inventory(self, preset=None):
-        pid = preset or self.settings.get("preset")
-        if not pid:
+        """preset: a reader preset id, or 'pattern:<id>' for a firing pattern. Default: the saved choice."""
+        sel = preset or self.settings.get("preset")
+        if not sel:
             raise ValueError("No preset chosen.")
-        self.control.start(pid)
-        log.info("inventory started with preset %s", pid)
+        self._cancel_pattern()
+        if sel.startswith(PATTERN_PREFIX):
+            pattern = self.find_pattern(sel)
+            if not pattern:
+                raise ValueError(f"No firing pattern “{sel[len(PATTERN_PREFIX):]}”.")
+            self._start_pattern(pattern)
+            return sel
+        self.control.start(sel)
+        log.info("inventory started with preset %s", sel)
         self.refresh_status()
-        return pid
+        return sel
 
     def stop_inventory(self):
+        self._cancel_pattern()
         self.control.stop()
         log.info("inventory stopped")
         self.refresh_status()
         # everything currently in the field is now unknown; report it gone
         self._emit_all(self.tracker.sweep(self.clock() + 10 ** 6))
         self.tracker.clear()
+
+    # -- firing patterns
+    def _start_pattern(self, pattern):
+        # check the first step's preset is accepted before going to the background (errors reach the user)
+        first = pattern["steps"][0]
+        self.control.start(first["preset"])
+        cancel = threading.Event()
+        with self._pattern_lock:
+            self._pattern_cancel = cancel
+            self.tracker.min_exit_s = pattern_cycle_s(pattern) + 2
+            self.pattern = {"id": pattern["id"], "name": pattern["name"], "continuous": pattern["continuous"],
+                            "steps": len(pattern["steps"]), "step": 1, "preset": first["preset"], "phase": "scanning",
+                            "phase_ends": self.clock() + first["seconds"], "cycle": 1, "error": None}
+        log.info("firing pattern %s started", pattern["name"])
+        threading.Thread(target=self._run_pattern, args=(pattern, cancel), daemon=True, name="rfid-pattern").start()
+        self.refresh_status()
+
+    def _run_pattern(self, pattern, cancel):
+        cycle, first_step_started = 1, True
+        try:
+            while not cancel.is_set():
+                for i, st in enumerate(pattern["steps"]):
+                    if cancel.is_set():
+                        return
+                    if not first_step_started:
+                        self._pattern_update(step=i + 1, preset=st["preset"], phase="scanning",
+                                             phase_ends=self.clock() + st["seconds"], cycle=cycle)
+                        try:
+                            self.control.start(st["preset"])
+                        except (ApiError, OSError) as e:
+                            self._pattern_update(error=f"step {i + 1} ({st['preset']}): {e}")
+                            log.warning("firing pattern %s: %s", pattern["name"], e)
+                    first_step_started = False
+                    if cancel.wait(st["seconds"]):
+                        return
+                    try:
+                        self.control.stop()
+                    except (ApiError, OSError) as e:
+                        self._pattern_update(error=f"stopping {st['preset']}: {e}")
+                    if st["pause_s"] > 0:
+                        self._pattern_update(phase="pause", phase_ends=self.clock() + st["pause_s"])
+                        if cancel.wait(st["pause_s"]):
+                            return
+                if not pattern["continuous"]:
+                    log.info("firing pattern %s finished", pattern["name"])
+                    break
+                cycle += 1
+        finally:
+            with self._pattern_lock:
+                if self._pattern_cancel is cancel:      # not replaced by a newer start
+                    self._pattern_cancel = None
+                    self.pattern = None
+                    self.tracker.min_exit_s = 0
+            self.refresh_status()
+
+    def _pattern_update(self, **kw):
+        with self._pattern_lock:
+            if self.pattern:
+                self.pattern.update(kw)
+
+    def _cancel_pattern(self):
+        with self._pattern_lock:
+            cancel, self._pattern_cancel = self._pattern_cancel, None
+            self.pattern = None
+            self.tracker.min_exit_s = 0
+        if cancel:
+            cancel.set()
+
+    def pattern_status(self):
+        with self._pattern_lock:
+            if not self.pattern:
+                return None
+            p = dict(self.pattern)
+        p["remaining_s"] = max(0, round(p.pop("phase_ends") - self.clock(), 1))
+        return p
 
     def refresh_status(self):
         try:
@@ -428,7 +582,8 @@ class RfidEngine:
             # auto-start once the reader API answers (it can take a while after boot)
             if not started and self.settings.get("auto_start") and self.settings.get("preset") and self.reader_error is None:
                 started = True
-                if not self.reader.get("running") or self.reader.get("active_preset") != self.settings["preset"]:
+                sel = self.settings["preset"]
+                if sel.startswith(PATTERN_PREFIX) or not self.reader.get("running") or self.reader.get("active_preset") != sel:
                     try:
                         self.start_inventory()
                     except (ApiError, OSError, ValueError) as e:
@@ -440,7 +595,9 @@ class RfidEngine:
     # -- reporting
     def status(self):
         snap = self.tracker.snapshot()
-        return {"available": True, "running": bool(self.reader.get("running")), "reader_status": self.reader.get("status"),
+        pattern = self.pattern_status()
+        return {"available": True, "running": bool(self.reader.get("running")) or pattern is not None,
+                "pattern": pattern, "reader_status": self.reader.get("status"),
                 "active_preset": self.reader.get("active_preset"), "reader_error": self.reader_error,
                 "stream_connected": self.stream_connected, "stream_error": self.stream_error,
                 "stream_lines": self.stream_lines, **snap}

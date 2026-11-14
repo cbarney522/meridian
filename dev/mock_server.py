@@ -196,7 +196,7 @@ def mock_command(name, args):
         action = str(args.get("action", "")).lower()
         try:
             if action == "start":
-                RFID.start_inventory(args.get("preset") or None)
+                RFID.start_inventory(("pattern:" + str(args["pattern"])) if args.get("pattern") else (args.get("preset") or None))
             elif action == "stop":
                 RFID.stop_inventory()
             elif action != "status":
@@ -204,7 +204,7 @@ def mock_command(name, args):
         except ApiError as e:
             raise ValueError(f"reader refused: {e}") from None
         st = RFID.status()
-        return {k: st[k] for k in ("running", "active_preset", "tags_in_field", "read_rate", "zones")}
+        return {k: st[k] for k in ("running", "active_preset", "pattern", "tags_in_field", "read_rate", "zones")}
     raise ValueError(f"unknown command '{name}' (try ping, identify, status, info or inventory)")
 
 

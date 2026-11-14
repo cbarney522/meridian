@@ -219,7 +219,7 @@ class App:
             action = str(args.get("action", "")).lower()
             try:
                 if action == "start":
-                    self.rfid.start_inventory(args.get("preset") or None)
+                    self.rfid.start_inventory(("pattern:" + str(args["pattern"])) if args.get("pattern") else (args.get("preset") or None))
                 elif action == "stop":
                     self.rfid.stop_inventory()
                 elif action != "status":
@@ -227,7 +227,7 @@ class App:
             except ApiError as e:
                 raise ValueError(f"reader refused: {e}") from None
             st = self.rfid.status()
-            return {k: st[k] for k in ("running", "active_preset", "tags_in_field", "read_rate", "zones")}
+            return {k: st[k] for k in ("running", "active_preset", "pattern", "tags_in_field", "read_rate", "zones")}
         raise ValueError(f"unknown command '{name}' (try ping, identify, status, info or inventory)")
 
     def mqtt_settings(self):
