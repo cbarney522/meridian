@@ -58,6 +58,10 @@ export PYTHONTZPATH="/usr/share/zoneinfo:$CAP_ROOT/zoneinfo"
   done
   echo "--- serial devices"
   ls -l /dev/ttyACM* /dev/ttyUSB* 2>&1
+  if [ -x "$CAP_ROOT/python/bin/python3" ]; then
+    T=""; command -v timeout >/dev/null 2>&1 && T="timeout 20"
+    $T "$CAP_ROOT/python/bin/python3" "$CAP_ROOT/app/tools/serial_probe.py" 2>&1 || echo "  serial probe failed"
+  fi
   echo "--- time"
   echo "  system tz db: $( [ -d /usr/share/zoneinfo/America ] && echo present || echo absent); bundled: $( [ -d "$CAP_ROOT/zoneinfo/America" ] && echo present || echo absent)"
   chronyc -n tracking 2>&1 | grep -E 'Reference|Leap|System time' || echo "  chronyc not usable"

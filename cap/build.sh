@@ -22,7 +22,7 @@ OUT="meridian_${VERSION}.upgx"
 STAGE=build/cap
 
 # ---- checks before packaging
-python3 -m py_compile "$REPO"/app/server.py "$REPO"/app/core/*.py
+python3 -m py_compile "$REPO"/app/server.py "$REPO"/app/core/*.py "$REPO"/app/tools/*.py
 python3 -c "import json,sys; [json.load(open(p)) for p in sys.argv[1:]]" \
   "$REPO"/app/defs/roles.json "$REPO"/app/defs/menu.json files/input_manifest.json
 bash -n files/start

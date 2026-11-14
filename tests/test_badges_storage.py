@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
+ROOT_APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app")
 from core import badges, storage  # noqa: E402
 from core.badges import KeyAssembler, normalize, validate_settings, DEFAULT_SETTINGS  # noqa: E402
 
@@ -139,9 +140,6 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(storage.warnings_for({"fs_type": "vfat", "read_only": False}, {"size": 100, "free": 50}, 10), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class BrowseTests(unittest.TestCase):
     def setUp(self):
@@ -182,3 +180,25 @@ class BrowseTests(unittest.TestCase):
             open(os.path.join(d, f"f{i:02}"), "w").close()
         r = storage.list_dir(self.root, "many", limit=10)
         self.assertEqual((len(r["entries"]), r["total"], r["truncated"]), (10, 30, True))
+
+
+class SerialProbeTests(unittest.TestCase):
+    def test_probe_reads_console_reply(self):
+        import pty
+        import threading
+        sys.path.insert(0, os.path.join(ROOT_APP, "tools"))
+        import serial_probe
+        master, slave = pty.openpty()
+
+        def console():
+            buf = b""
+            while b"\n" not in buf:
+                buf += os.read(master, 64)
+            os.write(master, b"\r\nharness01 login: ")
+        threading.Thread(target=console, daemon=True).start()
+        self.assertIn(b"login:", serial_probe.probe(os.ttyname(slave)))
+        os.close(master); os.close(slave)
+
+
+if __name__ == "__main__":
+    unittest.main()
