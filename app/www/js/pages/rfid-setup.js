@@ -352,7 +352,7 @@ export function render(root, ctx) {
   }
   function drawZoneCounts() {
     const byPort = {};
-    for (const t of state.data.status.tags) byPort[t.antenna] = (byPort[t.antenna] || 0) + 1;
+    for (const t of state.data.status.tags) if (t.state === "present") byPort[t.antenna] = (byPort[t.antenna] || 0) + 1;
     for (const p of PORTS) if (zoneCounts[p]) zoneCounts[p].textContent = String(byPort[p] || 0);
   }
 

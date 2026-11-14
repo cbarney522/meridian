@@ -231,6 +231,9 @@ class _Tag:
         self.cand, self.cand_n = None, 0
 
 
+RECENT_KEEP_S = 300                 # how long a tag that went missing stays listed on Tags in field
+
+
 class TagTracker:
     """Thread-safe. Feed read(); call sweep() regularly. Both return a list of (event_type, payload)."""
 
@@ -238,7 +241,8 @@ class TagTracker:
         self.clock = clock
         self.lock = threading.Lock()
         self.tags = {}
-        self.pending = {}           # epc -> [zone, antenna, count, first, last, rssi]
+        self.pending = {}           # epc -> [zone, antenna, count, first, last, rssi]   (read, not yet confirmed)
+        self.recent = {}            # epc -> {..., "gone_at"}   dropped out; listed (not actionable) for RECENT_KEEP_S
         self.read_times = collections.deque()
         self.total_reads = 0
         self.ignored = 0
@@ -294,6 +298,7 @@ class TagTracker:
             self.total_reads += 1
             self.read_times.append(now)
             rssi = round(rssi_cdbm / 100, 1) if rssi_cdbm is not None else None
+            self.recent.pop(epc, None)          # read again: counts start over (pending) or it's present
             tag = self.tags.get(epc)
             if tag is None:
                 p = self.pending.get(epc)
@@ -338,9 +343,16 @@ class TagTracker:
                     del self.tags[epc]
                     out.append(("tag_exit", {"epc": epc, "zone": tag.zone, "antenna": tag.antenna,
                                              "dwell_s": round(tag.last - tag.first, 1), "reason": "gone"}))
+                    self.recent[epc] = {"zone": tag.zone, "antenna": tag.antenna, "rssi": tag.rssi, "reads": tag.reads,
+                                        "first": tag.first, "last": tag.last, "gone_at": now}
             for epc, p in list(self.pending.items()):
                 if now - p[4] > limit:
                     del self.pending[epc]
+                    self.recent[epc] = {"zone": p[0], "antenna": p[1], "rssi": p[5], "reads": p[2],
+                                        "first": p[3], "last": p[4], "gone_at": now}
+            for epc, r in list(self.recent.items()):
+                if now - r["gone_at"] > RECENT_KEEP_S:
+                    del self.recent[epc]
             while self.read_times and now - self.read_times[0] > 5:
                 self.read_times.popleft()
         return out
@@ -350,6 +362,7 @@ class TagTracker:
         with self.lock:
             self.tags.clear()
             self.pending.clear()
+            self.recent.clear()
             self.read_times.clear()
 
     def snapshot(self, now=None, limit=500):
@@ -360,12 +373,24 @@ class TagTracker:
             zones = collections.Counter(t.zone for t in self.tags.values())
             for name in self.s["zones"].values():
                 zones.setdefault(name, 0)
-            tags = sorted(self.tags.values(), key=lambda t: (t.zone, t.epc))[:limit]
-            return {"tags_in_field": len(self.tags), "read_rate": round(len(self.read_times) / 5, 1),
+            need = self.enter_reads()
+            rows = [{"epc": t.epc, "zone": t.zone, "antenna": t.antenna, "rssi_dbm": t.rssi, "reads": t.reads,
+                     "first_seen": round(t.first, 1), "last_seen": round(t.last, 1), "seen_ago_s": round(now - t.last, 1),
+                     "state": "present", "actionable": True} for t in self.tags.values()]
+            # read, but not yet the number of reads needed to confirm arrival
+            rows += [{"epc": epc, "zone": p[0], "antenna": p[1], "rssi_dbm": p[5], "reads": p[2],
+                      "first_seen": round(p[3], 1), "last_seen": round(p[4], 1), "seen_ago_s": round(now - p[4], 1),
+                      "state": "confirming", "actionable": False, "reads_needed": need} for epc, p in self.pending.items()]
+            # went unread for the gone-after time (listed for a while, not actionable)
+            rows += [{"epc": epc, "zone": r["zone"], "antenna": r["antenna"], "rssi_dbm": r["rssi"], "reads": r["reads"],
+                      "first_seen": round(r["first"], 1), "last_seen": round(r["last"], 1), "seen_ago_s": round(now - r["last"], 1),
+                      "state": "gone", "actionable": False} for epc, r in self.recent.items()]
+            order = {"present": 0, "confirming": 1, "gone": 2}
+            rows.sort(key=lambda r: (order[r["state"]], r["zone"], r["epc"]))
+            return {"tags_in_field": len(self.tags), "confirming": len(self.pending), "recently_gone": len(self.recent),
+                    "reads_to_confirm": need, "read_rate": round(len(self.read_times) / 5, 1),
                     "zones": dict(sorted(zones.items())), "total_reads": self.total_reads, "ignored": self.ignored,
-                    "tags": [{"epc": t.epc, "zone": t.zone, "antenna": t.antenna, "rssi_dbm": t.rssi,
-                              "reads": t.reads, "first_seen": round(t.first, 1), "last_seen": round(t.last, 1),
-                              "seen_ago_s": round(now - t.last, 1)} for t in tags]}
+                    "tags": rows[:limit]}
 
 
 # ---------------------------------------------------------------- preset inspection

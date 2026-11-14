@@ -93,6 +93,25 @@ class TrackerTests(unittest.TestCase):
         u = rfid.TagTracker(dict(rfid.DEFAULTS, enter_reads=1))
         self.assertEqual(u.read(EPC, 4, None, now=0)[0][1]["zone"], "Antenna 4")
 
+    def test_actionable_lifecycle(self):
+        rows = lambda now: {r["epc"]: r for r in self.t.snapshot(now=now)["tags"]}
+        self.t.read(EPC, 1, -5000, now=0)
+        r = rows(0.1)[EPC]
+        self.assertEqual((r["state"], r["actionable"], r["reads"], r["reads_needed"]), ("confirming", False, 1, 2))
+        self.t.read(EPC, 1, -5000, now=0.5)
+        self.assertEqual((rows(0.6)[EPC]["state"], rows(0.6)[EPC]["actionable"]), ("present", True))
+        self.t.sweep(now=6)                                    # unread for the gone-after time
+        r = rows(6)[EPC]
+        self.assertEqual((r["state"], r["actionable"]), ("gone", False))
+        self.t.read(EPC, 1, -5000, now=7)                     # back: has to be confirmed again
+        self.assertEqual((rows(7)[EPC]["state"], rows(7)[EPC]["actionable"]), ("confirming", False))
+        self.t.sweep(now=13)                                   # a pending tag that stops being read is listed as gone
+        self.assertEqual(rows(13)[EPC]["state"], "gone")
+        self.t.sweep(now=13 + rfid.RECENT_KEEP_S + 1)          # and dropped after a while
+        self.assertNotIn(EPC, rows(13 + rfid.RECENT_KEEP_S + 1))
+        s = self.t.snapshot(now=0)
+        self.assertIn("confirming", s)
+
     def test_snapshot(self):
         for i in range(10):
             self.t.read(EPC, 1, -5000, now=i * 0.1)

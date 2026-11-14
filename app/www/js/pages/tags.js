@@ -12,12 +12,13 @@ export function render(root) {
 
   root.append(
     h("div", { class: "toolbar" }, h("div", {}, h("h1", {}, "Tags in field"),
-      h("p", { class: "subtitle" }, "Tags the reader can see right now, by zone. Updates every second.")), search),
+      h("p", { class: "subtitle" }, "Tags the reader can see right now, by zone. Updates every second. ",
+        "A tag is actionable once it's been read the number of times set in Reads to confirm arrival, and stops being actionable when it goes unread for the Gone after time.")), search),
     head, chips,
     h("div", { class: "card table-card" },
       h("table", { class: "table tags-table" },
-        h("thead", {}, h("tr", {}, ["EPC", "Zone", "Antenna", "Signal", "Reads", "Here for", "Last read"].map((x, i) =>
-          h("th", { class: i >= 2 ? "num" : null }, h("span", { class: "th-plain" }, x))))),
+        h("thead", {}, h("tr", {}, ["EPC", "Actionable?", "Zone", "Antenna", "Signal", "Reads", "Here for", "Last read"].map((x, i) =>
+          h("th", { class: i >= 3 ? "num" : null }, h("span", { class: "th-plain" }, x))))),
         tbody)));
 
   async function load() {
@@ -30,7 +31,9 @@ export function render(root) {
     fill(head, h("div", { class: "statline" },
       s.running ? h("span", { class: "pill ok" }, `Inventory running: ${s.active_preset || "?"}`)
         : h("span", { class: "pill neutral" }, "Inventory stopped"),
-      h("span", {}, h("b", {}, String(s.tags_in_field)), " tags"),
+      h("span", {}, h("b", {}, String(s.tags_in_field)), " actionable"),
+      s.confirming ? h("span", {}, h("b", {}, String(s.confirming)), ` confirming (need ${s.reads_to_confirm} read${s.reads_to_confirm === 1 ? "" : "s"})`) : null,
+      s.recently_gone ? h("span", { class: "muted" }, `${s.recently_gone} recently gone`) : null,
       h("span", {}, h("b", {}, String(s.read_rate)), " reads/s"),
       !s.stream_connected ? h("span", { class: "pill bad", title: s.stream_error || "" }, "Tag stream not connected") : null,
       !s.running ? h("a", { href: "#/hardware/rfid" }, "Start inventory") : null));
@@ -39,15 +42,17 @@ export function render(root) {
       chip("All", s.tags_in_field, ""),
       zones.map(([z, n]) => chip(z, n, z)));
     const rows = s.tags.filter((t) => (!state.zone || t.zone === state.zone) && (!state.filter || t.epc.includes(state.filter)));
-    fill(tbody, rows.length ? rows.map((t) => h("tr", {},
+    fill(tbody, rows.length ? rows.map((t) => h("tr", { class: t.state === "gone" ? "row-off" : null,
+        title: t.state === "gone" ? "Not read for the Gone after time" : t.state === "confirming" ? `Read ${t.reads} of ${t.reads_needed} times needed` : "" },
       h("td", { class: "mono" }, t.epc),
+      h("td", {}, t.actionable ? h("span", { class: "pill ok" }, "Yes") : ""),
       h("td", {}, t.zone),
       h("td", { class: "num" }, String(t.antenna)),
       h("td", { class: "num" }, t.rssi_dbm === null ? "—" : `${t.rssi_dbm} dBm`),
-      h("td", { class: "num" }, String(t.reads)),
-      h("td", { class: "num" }, dur(t.last_seen - t.first_seen)),
-      h("td", { class: "num" }, t.seen_ago_s < 1 ? "now" : `${Math.round(t.seen_ago_s)} s ago`)))
-      : h("tr", {}, h("td", { colspan: 7, class: "empty" },
+      h("td", { class: "num" }, t.state === "confirming" ? `${t.reads} of ${t.reads_needed}` : String(t.reads)),
+      h("td", { class: "num" }, t.state === "gone" ? "—" : dur(t.last_seen - t.first_seen)),
+      h("td", { class: "num" }, t.seen_ago_s < 1 ? "now" : ago(t.seen_ago_s))))
+      : h("tr", {}, h("td", { colspan: 8, class: "empty" },
         !s.running ? "Inventory isn't running." : s.tags.length ? "No tags match the filter." : "No tags in the field.")));
   }
 
@@ -62,6 +67,10 @@ export function render(root) {
   return () => clearInterval(timer);
 }
 
+function ago(s) {
+  s = Math.round(s);
+  return s < 60 ? `${s} s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`;
+}
 function dur(s) {
   s = Math.max(0, Math.round(s));
   if (s < 60) return `${s} s`;
