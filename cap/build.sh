@@ -73,6 +73,17 @@ if [ -n "$GCC_S" ]; then cp -L "$GCC_S" "$STAGE/python/lib/" && echo "Bundled li
 else echo "Note: no aarch64 libgcc_s.so.1 in the ETK; relying on the reader's copy"; fi
 echo "Bundled Python: $(du -sh "$STAGE/python" | cut -f1)"
 
+# ---- time-zone database (TZif files are architecture-independent), used if the reader has none
+if [ -d /usr/share/zoneinfo/America ]; then
+  mkdir -p "$STAGE/zoneinfo"
+  cp -aL /usr/share/zoneinfo/. "$STAGE/zoneinfo/"
+  rm -rf "$STAGE/zoneinfo/posix" "$STAGE/zoneinfo/right" "$STAGE/zoneinfo"/*.tab "$STAGE/zoneinfo"/leap* \
+         "$STAGE/zoneinfo"/posixrules "$STAGE/zoneinfo"/tzdata.zi "$STAGE/zoneinfo"/SECURITY 2>/dev/null || true
+  echo "Bundled time-zone database: $(du -sh "$STAGE/zoneinfo" | cut -f1)"
+else
+  echo "Note: no /usr/share/zoneinfo on this build machine (sudo apt install tzdata); only UTC if the reader lacks one"
+fi
+
 # ---- fallback TLS cert, used only if the reader has no openssl
 mkdir -p "$STAGE/app/tls"
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \

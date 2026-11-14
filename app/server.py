@@ -35,7 +35,7 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
-from core import accounts_api, netinfo  # noqa: E402
+from core import accounts_api, netinfo, timeloc  # noqa: E402
 from core.readerapi import ReaderApi  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
 
@@ -152,7 +152,9 @@ class App:
             "api": {"ok": r["ok"], "error": r["error"], "fetched": r["fetched"], "using_default": r.get("using_default"),
                     "username": cfg.get("username") or "root", "password_set": bool(cfg.get("password"))},
             "net": net,
-            "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "timezone": time.strftime("%Z"),
+            "time": timeloc.now_in(self.site().get("timezone")).strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "timezone": timeloc.now_in(self.site().get("timezone")).strftime("%Z"),
+            "clock_24h": self.site().get("clock_24h", False),
             "uptime_s": int(read_first("/proc/uptime", float) or 0),
             "app_version": app_version(),
         }
@@ -174,6 +176,34 @@ class App:
             return 409, {"error": "conflict"}
         if getattr(self, "reader_wake", None):
             self.reader_wake.set()          # re-read now with the new login
+        return 200, {"ok": True, "revision": rev}
+
+    # -- time & location
+    def site(self):
+        return self.store.get("site", timeloc.SITE_DEFAULTS)[1]
+
+    def time_status(self):
+        site = self.site()
+        tz = site.get("timezone") or "UTC"
+        local = timeloc.now_in(tz)
+        sun = (timeloc.sun_times(site["latitude"], site["longitude"], tz)
+               if site.get("latitude") is not None and site.get("longitude") is not None else None)
+        api_raw = (getattr(self, "reader_cache", None) or {}).get("raw", {})
+        ntp_cfg = next((api_raw[k] for k in ("ntp", "time") if isinstance(api_raw.get(k), dict)
+                        and "_error" not in api_raw[k]), None)
+        return {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "local": local.isoformat(timespec="seconds"), "timezone": tz,
+                "tz_abbrev": local.strftime("%Z"), "utc_offset": local.strftime("%z"),
+                "tz_database": timeloc.zone("America/New_York") is not None,
+                "ntp": timeloc.ntp_status(), "reader_ntp_config": ntp_cfg, "sun": sun}
+
+    def site_save(self, revision, body):
+        clean, errors = timeloc.validate_site(body)
+        if errors:
+            return 400, {"error": "invalid", "details": errors}
+        rev = self.store.put("site", revision, clean)
+        if rev is None:
+            return 409, {"error": "conflict"}
         return 200, {"ok": True, "revision": rev}
 
     # -- settings sections
@@ -397,7 +427,9 @@ class App:
         info = self.reader_info()
         it = info["items"]
         return {
-            "reader": {"name": socket.gethostname(), "serial": it.get("serial"), "site": None, "firmware": it.get("firmware"),
+            "reader": {"name": self.site().get("site_name") or socket.gethostname(), "hostname": socket.gethostname(),
+                       "serial": it.get("serial"), "site": self.site().get("site_id") or None,
+                       "clock_24h": info["clock_24h"], "firmware": it.get("firmware"),
                        "app_version": app_version(), "profile": None,
                        "description": it.get("description"), "region": it.get("region"),
                        "rfid_interface": it.get("rfid_interface"), "sku": it.get("sku"),
@@ -541,7 +573,7 @@ class Handler(BaseHTTPRequestHandler):
                 "permissions": sorted(APP.access.permissions_for(role)),
                 "must_change_password": self.account["must_change"],
                 "dev_mode": False, "roles": [],
-                "reader": {"name": socket.gethostname(), "serial": None},
+                "reader": {"name": APP.site().get("site_name") or socket.gethostname(), "serial": None},
                 "app_version": app_version(),
             })
         if p == "/api/menu":
@@ -569,6 +601,16 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/dev/diagnostics":
             if self.require("dev.tools"):
                 self.send_json(APP.diagnostics())
+            return
+        if p == "/api/time":
+            if self.require("system.view"):
+                self.send_json(APP.time_status())
+            return
+        if p == "/api/site-settings":
+            if self.require("system.view"):
+                rev, cfg = APP.store.get("site", timeloc.SITE_DEFAULTS)
+                self.send_json({"revision": rev, "settings": cfg, "zones": timeloc.available_zones(),
+                                "common_zones": timeloc.COMMON_ZONES})
             return
         if p == "/api/reader/info":
             if self.require("system.view"):
@@ -611,6 +653,15 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError):
                 return self.send_json({"error": "bad_request"}, 400)
             status, result = APP.reader_api_save(body.get("revision"), body)
+            return self.send_json(result, status)
+        if p == "/api/site-settings":
+            if not self.require("system.edit"):
+                return
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, 400)
+            status, result = APP.site_save(body.get("revision"), body.get("settings"))
             return self.send_json(result, status)
         handlers = {
             "/api/usb/assignments": ("hardware.edit", APP.usb_save, "assignments"),

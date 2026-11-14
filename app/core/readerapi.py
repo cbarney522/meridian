@@ -17,7 +17,11 @@ ENDPOINTS = {
     "image": "/api/v1/system/image",
     "region": "/api/v1/system/region",
     "rfid_interface": "/api/v1/system/rfid/interface",
+    # probes: not documented; kept raw so we can see whether this firmware exposes NTP settings
+    "ntp": "/api/v1/system/ntp",
+    "time": "/api/v1/system/time",
 }
+OPTIONAL = {"ntp", "time"}       # a 404 here is expected and isn't reported as a problem
 
 # item -> (endpoint, candidate field names in order of preference)
 FIELDS = {
@@ -59,6 +63,8 @@ class ReaderApi:
                 raw[name] = self.get(path)
             except urllib.error.HTTPError as e:
                 raw[name] = {"_error": f"HTTP {e.code}"}
+                if name in OPTIONAL and e.code == 404:
+                    continue
                 errors.append("login rejected (check the reader user name and password)" if e.code in (401, 403)
                               else f"{path}: HTTP {e.code}")
             except (urllib.error.URLError, OSError, ValueError) as e:

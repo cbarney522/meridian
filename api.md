@@ -275,3 +275,13 @@ Switches the mock server's current role. Not implemented by the real server.
 | POST | `/api/reader/api-test` | system.edit | `{username?, password?}` → `{ok, error, items}`. Doesn't save anything. |
 
 Meridian calls `https://localhost/api/v1/system`, `/system/image`, `/system/region` and `/system/rfid/interface` with HTTP Basic auth. Until a password is saved it tries the factory default (`root` / `impinj`). Field names are matched loosely; the raw responses appear under `reader_api_raw` in `/api/diagnostics` (Developer › Debug log). `/api/status` now also carries these fields in `reader`.
+
+## Time & location (System › Time & location)
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/time` | system.view | `utc`, `local` (ISO, site zone), `timezone`, `tz_abbrev`, `utc_offset`, `tz_database` (false = only UTC available), `ntp` {available, tracking {reference, stratum, ref_time, offset_ms, update_interval_s, leap, synced}, sources [{name, state, selected, stratum, reach, last_rx_s, offset_ms}]} from `chronyc -c -n`, `sun` {date, sunrise, sunset, day_length} in site time or null, `reader_ntp_config` (raw, if the reader API exposes one). |
+| GET | `/api/site-settings` | system.view | `{revision, settings, zones, common_zones}`. settings: `site_id`, `site_name`, `location`, `timezone`, `clock_24h`, `latitude`, `longitude`. |
+| PUT | `/api/site-settings` | system.edit | `{revision, settings}` → 400 `invalid` with `details`, 409 `conflict`. |
+
+The reader's clock stays on UTC and is set by chronyd; Meridian can't change the system time zone or NTP servers (no root). It applies the site time zone itself. `site_name` replaces the hostname as the reader name in the top bar, `/api/status` and `/api/session`; `site_id` is `reader.site`. The CAP bundles a time-zone database (`zoneinfo/`, from the build machine's tzdata) used when the reader has none (`PYTHONTZPATH`).

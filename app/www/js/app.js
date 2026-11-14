@@ -9,6 +9,7 @@ import * as storagePage from "./pages/storage.js";
 import * as debugLog from "./pages/debug-log.js";
 import * as accounts from "./pages/accounts.js";
 import * as about from "./pages/about.js";
+import * as timeLocation from "./pages/time-location.js";
 import * as placeholder from "./pages/placeholder.js";
 
 // Pages that have real implementations. Everything else in the menu gets the placeholder
@@ -16,7 +17,7 @@ import * as placeholder from "./pages/placeholder.js";
 const PAGES = { "/dashboard": dashboard, "/site": site, "/hardware/usb": usbDevices,
                 "/hardware/badges": badgeReaders, "/hardware/storage": storagePage,
                 "/dev/debug-log": debugLog, "/system/accounts": accounts,
-                "/system/about": about };
+                "/system/about": about, "/system/time": timeLocation };
 
 const $ = (id) => document.getElementById(id);
 const ctx = { session: null, menuIndex: new Map(), events: null };

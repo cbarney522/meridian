@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb, badges, storage, accounts_api  # noqa: E402
+from core import usb, badges, storage, accounts_api, timeloc  # noqa: E402
 from core.config import Store  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
 import fake_sysfs  # noqa: E402
@@ -38,6 +38,28 @@ ACCESS = Access()
 STATE = {"role": "developer", "user": "cliff"}
 # Accounts use the real core.config.Store, in a throwaway folder, seeded with a few examples.
 ACCOUNTS = Store(tempfile.mkdtemp(prefix="meridian-accounts-"))
+SITE = {"revision": 0, "settings": dict(timeloc.SITE_DEFAULTS, site_id="plant-atl", site_name="Crib 2 portal",
+                                        location="Building 2, tool crib", timezone="America/New_York",
+                                        latitude=34.0656, longitude=-84.6769)}
+
+
+def mock_time():
+    st = SITE["settings"]
+    local = timeloc.now_in(st["timezone"])
+    sun = timeloc.sun_times(st["latitude"], st["longitude"], st["timezone"]) if st["latitude"] is not None else None
+    return {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "local": local.isoformat(timespec="seconds"),
+            "timezone": st["timezone"], "tz_abbrev": local.strftime("%Z"), "utc_offset": local.strftime("%z"),
+            "tz_database": True, "sun": sun, "reader_ntp_config": None,
+            "ntp": {"available": True,
+                    "tracking": {"reference": "129.6.15.28", "stratum": 2, "ref_time": time.time() - 412,
+                                 "offset_ms": -0.004, "update_interval_s": 1031.2, "leap": "Normal", "synced": True},
+                    "sources": [
+                        {"mode": "server", "state": "in use", "selected": True, "name": "129.6.15.28", "stratum": 1,
+                         "reach": 255, "last_rx_s": 412, "offset_ms": -0.012},
+                        {"mode": "server", "state": "combined", "selected": False, "name": "132.163.97.1", "stratum": 1,
+                         "reach": 255, "last_rx_s": 398, "offset_ms": 0.41},
+                        {"mode": "server", "state": "unreachable", "selected": False, "name": "192.168.0.1", "stratum": 0,
+                         "reach": 0, "last_rx_s": None, "offset_ms": 0.0}]}}
 for _u, _n, _r in (("cliff", "Cliff Barney", "developer"), ("admin", "Default administrator", "developer"),
                    ("mreyes", "M. Reyes", "site_admin"), ("jsmith", "J. Smith", "technician"),
                    ("tokafor", "T. Okafor", "supervisor"), ("qa", "Quality viewer", "viewer")):
@@ -123,12 +145,15 @@ class Sim:
     def status(self):
         up = int(time.time() - STARTED) + 282441
         return {
-            "reader": {"name": "Crib 2 portal", "serial": "37017090614", "site": "plant-atl",
+            "reader": {"name": SITE["settings"]["site_name"] or "impinj-17-1b-e6", "hostname": "impinj-17-1b-e6",
+                       "serial": "37017090614", "site": SITE["settings"]["site_id"] or None,
+                       "clock_24h": SITE["settings"]["clock_24h"],
                        "firmware": "10.4.0.240", "app_version": "0.1.0-dev", "profile": "tool-crib-portal",
                        "description": "Impinj R700 RAIN RFID Reader rev 2", "region": "FCC Part 15.247",
                        "rfid_interface": "Impinj IoT Device Interface", "sku": "IPJ-R700-341",
                        "ipv4": "192.168.0.188", "ipv6": "2601:c2:f00:4267:738f:d53b:810f:3fdb", "mac": "00:16:25:17:1B:E6",
-                       "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "timezone": time.strftime("%Z"),
+                       "time": timeloc.now_in(SITE["settings"]["timezone"]).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                       "timezone": timeloc.now_in(SITE["settings"]["timezone"]).strftime("%Z"),
                        "api_ok": True, "api_error": None,
                        "uptime_s": up, "ntp_synced": True, "temp_c": round(41 + random.random() * 2, 1)},
             "rfid": {"running": True, "read_rate": self.read_rate,
@@ -525,7 +550,9 @@ def mock_reader_info():
                     "username": READER_API["username"], "password_set": bool(READER_API["password"])},
             "net": {"interface": "eth0", "mac": "00:16:25:17:1B:E6", "ipv4": "192.168.0.188",
                     "ipv6": "2601:c2:f00:4267:738f:d53b:810f:3fdb", "ipv6_all": [], "hostname": "impinj-17-1b-e6"},
-            "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "timezone": time.strftime("%Z"),
+            "time": timeloc.now_in(SITE["settings"]["timezone"]).strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "timezone": timeloc.now_in(SITE["settings"]["timezone"]).strftime("%Z"),
+            "clock_24h": SITE["settings"]["clock_24h"],
             "uptime_s": int(time.time() - STARTED) + 282441, "app_version": "0.1.0-dev"}
 
 
@@ -586,7 +613,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "dev_mode": True,
                 "roles": [{"id": k, "label": v["label"], "description": v["description"]}
                           for k, v in ACCESS.roles.items()],
-                "reader": {"name": "Crib 2 portal", "serial": "37017090614"},
+                "reader": {"name": SITE["settings"]["site_name"] or "impinj-17-1b-e6", "serial": "37017090614"},
             })
         if p == "/api/menu":
             return self.send_json({"menus": ACCESS.menu_for(role)})
@@ -611,6 +638,15 @@ class Handler(SimpleHTTPRequestHandler):
         if p == "/api/reader/info":
             if self.require("system.view"):
                 self.send_json(mock_reader_info())
+            return
+        if p == "/api/time":
+            if self.require("system.view"):
+                self.send_json(mock_time())
+            return
+        if p == "/api/site-settings":
+            if self.require("system.view"):
+                self.send_json({"revision": SITE["revision"], "settings": SITE["settings"],
+                                "zones": timeloc.available_zones(), "common_zones": timeloc.COMMON_ZONES})
             return
         if p == "/api/reader/api-settings":
             if self.require("system.view"):
@@ -749,6 +785,18 @@ class Handler(SimpleHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith("/api/accounts/"):
             return self.accounts("PUT")
+        if p == "/api/site-settings":
+            if not self.require("system.edit"):
+                return
+            body = self.read_json()
+            if body.get("revision") != SITE["revision"]:
+                return self.send_json({"error": "conflict"}, HTTPStatus.CONFLICT)
+            clean, errors = timeloc.validate_site(body.get("settings"))
+            if errors:
+                return self.send_json({"error": "invalid", "details": errors}, HTTPStatus.BAD_REQUEST)
+            SITE["settings"] = clean
+            SITE["revision"] += 1
+            return self.send_json({"ok": True, "revision": SITE["revision"]})
         if p == "/api/reader/api-settings":
             if not self.require("system.edit"):
                 return

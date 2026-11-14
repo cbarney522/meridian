@@ -69,7 +69,7 @@ function drawCards(root, s, canAbout) {
         h("dt", {}, "IPv4"), h("dd", {}, v(r.ipv4)),
         h("dt", {}, "IPv6"), h("dd", {}, v(r.ipv6)),
         h("dt", {}, "MAC"), h("dd", {}, v(r.mac)),
-        h("dt", {}, "Reader time"), h("dd", {}, r.time ? `${r.time.slice(11, 19)} ${r.timezone || ""}` : v(null)))),
+        h("dt", {}, "Reader time"), h("dd", {}, r.time ? `${clock(r.time.slice(11, 19), r.clock_24h)} ${r.timezone || ""}` : v(null)))),
     h("section", { class: "card" }, h("h2", {}, "RFID"),
       rfidOn ? [
         h("div", { class: "big" }, f.tags_in_field, h("small", {}, "tags in field")),
@@ -119,6 +119,11 @@ function eventRow(ev) {
   return h("li", {}, h("time", {}, time), h("span", { class: "etype " + cls }, EVENT_LABEL[ev.type] || ev.type), h("span", {}, text));
 }
 
+function clock(hms, h24) {
+  if (h24) return hms;
+  const [H, M, S] = hms.split(":").map(Number);
+  return `${H % 12 || 12}:${String(M).padStart(2, "0")}:${String(S).padStart(2, "0")} ${H < 12 ? "AM" : "PM"}`;
+}
 function pill(ok, yes, no = yes) { return h("span", { class: "pill " + (ok ? "ok" : "bad") }, ok ? yes : no); }
 function uptime(s) {
   const d = Math.floor(s / 86400), hr = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
