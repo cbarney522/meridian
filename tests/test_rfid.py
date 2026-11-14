@@ -117,8 +117,9 @@ class ValidateTests(unittest.TestCase):
 
 # ---------------------------------------------------------------- fake reader
 class FakeReader(BaseHTTPRequestHandler):
-    state = {"running": False, "preset": None, "lines": [], "calls": []}
-    stream_ready = threading.Event()
+    # Each test makes its own subclass with its own state (see EngineTests.setUp), so a stream
+    # connection left over from an earlier test can't take this test's lines.
+    state = None
 
     def log_message(self, *a):
         pass
@@ -132,7 +133,7 @@ class FakeReader(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
-        st = FakeReader.state
+        st = self.state
         if self.path == "/api/v1/profiles/inventory/presets":
             return self.reply(200, ["default", "crib-portal"])
         if self.path == "/api/v1/status":
@@ -142,9 +143,8 @@ class FakeReader(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            FakeReader.stream_ready.set()
             try:
-                while True:
+                while st["alive"]:
                     while st["lines"]:
                         self.wfile.write((st["lines"].pop(0) + "\n").encode())
                     self.wfile.write(b"\n")
@@ -155,7 +155,7 @@ class FakeReader(BaseHTTPRequestHandler):
         self.reply(404, {"message": "no such thing"})
 
     def do_POST(self):
-        st = FakeReader.state
+        st = self.state
         for pid in ("crib-portal", "default"):
             if self.path == f"/api/v1/profiles/inventory/presets/{pid}/start":
                 st.update(running=True, preset=pid)
@@ -172,8 +172,9 @@ class FakeReader(BaseHTTPRequestHandler):
 
 class EngineTests(unittest.TestCase):
     def setUp(self):
-        FakeReader.state.update(running=False, preset=None, lines=[], calls=[])
-        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeReader)
+        self.state = {"running": False, "preset": None, "lines": [], "calls": [], "alive": True}
+        handler = type("FakeReaderForTest", (FakeReader,), {"state": self.state})
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.srv.daemon_threads = True
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{self.srv.server_address[1]}"
@@ -186,6 +187,7 @@ class EngineTests(unittest.TestCase):
 
     def tearDown(self):
         self.eng._stop.set()
+        self.state["alive"] = False            # ends this test's stream connections
         self.srv.shutdown()
         self.srv.server_close()
 
@@ -202,7 +204,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.eng.status()["active_preset"], "crib-portal")
         self.assertEqual(self.eng.refresh_presets(), ["default", "crib-portal"])
         self.assertTrue(self.wait(lambda: self.eng.stream_connected))
-        FakeReader.state["lines"] += [tag_line(), tag_line(b64=True),
+        self.state["lines"] += [tag_line(), tag_line(b64=True),
                                       json.dumps({"gpiTransitionEvent": {"gpi": 1, "transition": "high-to-low"}}),
                                       json.dumps({"somethingNewEvent": {}})]
         self.assertTrue(self.wait(lambda: any(e[0] == "tag_enter" for e in self.events)))
@@ -218,7 +220,7 @@ class EngineTests(unittest.TestCase):
 
     def test_stop_reports_tags_gone(self):
         self.assertTrue(self.wait(lambda: self.eng.stream_connected))
-        FakeReader.state["lines"] += [tag_line(EPC2), tag_line(EPC2)]
+        self.state["lines"] += [tag_line(EPC2), tag_line(EPC2)]
         self.assertTrue(self.wait(lambda: self.eng.status()["tags_in_field"] == 1))
         self.eng.stop_inventory()
         self.assertEqual(self.eng.status()["tags_in_field"], 0)
@@ -234,7 +236,7 @@ class PatternTests(EngineTests):
         super().setUp()
         self.eng.configure(dict(self.eng.settings, auto_start=False, patterns=[self.PATTERN]))
         self.assertTrue(self.wait(lambda: self.eng.stream_connected))
-        FakeReader.state["calls"].clear()
+        self.state["calls"].clear()
 
     def test_end_to_end(self):          # (inherited test not relevant here)
         pass
@@ -251,9 +253,9 @@ class PatternTests(EngineTests):
         self.assertTrue(self.wait(lambda: (self.eng.pattern_status() or {}).get("phase") == "pause", 3))
         self.assertTrue(self.wait(lambda: (self.eng.pattern_status() or {}).get("step") == 2, 3))
         self.assertTrue(self.wait(lambda: self.eng.pattern_status() is None, 4), "finishes when not continuous")
-        calls = [(c[1], c[2]) for c in FakeReader.state["calls"]]
+        calls = [(c[1], c[2]) for c in self.state["calls"]]
         self.assertEqual(calls, [("start", "crib-portal"), ("stop", None), ("start", "default"), ("stop", None)])
-        t = FakeReader.state["calls"]
+        t = self.state["calls"]
         self.assertGreaterEqual(t[2][0] - t[1][0], 0.4)               # the pause between steps
         self.assertEqual(self.eng.tracker.exit_timeout(), 1)          # back to the setting
 
@@ -266,9 +268,9 @@ class PatternTests(EngineTests):
         self.eng.stop_inventory()
         self.assertIsNone(self.eng.pattern_status())
         self.assertFalse(self.eng.status()["running"])
-        n = len(FakeReader.state["calls"])
+        n = len(self.state["calls"])
         time.sleep(1.5)
-        self.assertEqual(len(FakeReader.state["calls"]), n, "no more steps after stop")
+        self.assertEqual(len(self.state["calls"]), n, "no more steps after stop")
 
     def test_bad_first_step_is_reported(self):
         bad = dict(self.PATTERN, id="bad", name="Bad", steps=[{"preset": "nope", "seconds": 1, "pause_s": 0}] * 2)
