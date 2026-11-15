@@ -1,4 +1,4 @@
-// System › Time & location: site identity, site time zone, coordinates (sunrise/sunset for rules),
+// System › Time & location: site time zone, coordinates (sunrise/sunset for rules),
 // and the reader's NTP status. The reader's own clock stays on UTC (set by NTP); Meridian shows
 // and schedules everything in the site time zone.
 import { api, h, fill } from "../api.js";
@@ -15,7 +15,7 @@ export function render(root, ctx) {
 
   root.append(
     h("h1", {}, "Time & location"),
-    h("p", { class: "subtitle" }, "Where this reader is and what time it is there. Rules, logs and the kiosk use the site time zone."),
+    h("p", { class: "subtitle" }, "What time it is at this reader. Rules, logs and the kiosk use the site time zone."),
     msg.el,
     h("div", { class: "grid grid-2" }, clockCard, formBox, ntpCard),
     bar.el);
@@ -164,12 +164,9 @@ export function render(root, ctx) {
     drawMapLink();
 
     fill(formBox,
-      h("h2", {}, "Site"),
+      h("h2", {}, "Time zone & coordinates"),
+      h("p", { class: "hint" }, "Crib number, site ID, reader name and location are on ", h("a", { href: "#/system/identity" }, "System › Identity"), "."),
       h("div", { class: "form-grid" },
-        field("Site ID", text("site_id", { maxlength: 40, class: "mono", placeholder: "plant-atl" }),
-          "Short name shared by every reader at this site. Lowercase, digits and dashes; used in MQTT topics and the Site page."),
-        field("Reader name", text("site_name", { maxlength: 80, placeholder: "Crib 2 portal" }), "Shown in the top bar and on the Site page."),
-        field("Location", text("location", { maxlength: 120, placeholder: "Building 2, tool crib, east door" }), "Where in the building this reader is."),
         field("Time zone", tz, null),
         h("div", { class: "field" }, h("span", { class: "field-label" }, "Quick pick"), common, useBrowser),
         h("div", { class: "field" }, h("span", { class: "field-label" }, "Clock format"), fmt),

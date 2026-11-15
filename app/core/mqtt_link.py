@@ -161,7 +161,7 @@ def test_connection(st, client_id="meridian-test", timeout=7):
 
 
 class MqttLink:
-    """identity() -> {"reader","site","name","version","ip","firmware","uptime_s"};
+    """identity() -> {"reader","crib","site","name","version","ip","firmware","uptime_s"};
     on_command(name, args) -> result dict (raise ValueError for a refused command)."""
 
     def __init__(self, identity, on_command, emit=None):
@@ -323,7 +323,7 @@ class MqttLink:
         """Publish an event; queued if disconnected. No-op when MQTT is off."""
         if not self.settings.get("enabled"):
             return
-        body = {"type": etype, **data}
+        body = {"type": etype, "crib": (self.ident or self.identity()).get("crib"), **data}
         self.publish_raw(f"{self.base()}/evt/{topic_safe(etype)}", body, retain=False)
 
     def publish_raw(self, topic, body, retain=False):
@@ -361,7 +361,13 @@ class MqttLink:
                 with self.lock:
                     if not self.client:
                         continue
-                    if self.connected and time.time() - self.last_status >= self.settings["heartbeat_s"]:
+                    # name, location or crib number changed: republish the retained status now
+                    fresh = self.identity()
+                    changed = self.ident and {k: v for k, v in fresh.items() if k != "uptime_s"} != \
+                        {k: v for k, v in self.ident.items() if k != "uptime_s"}
+                    if changed:
+                        self.ident = fresh
+                    if self.connected and (changed or time.time() - self.last_status >= self.settings["heartbeat_s"]):
                         self._publish_status()
             except Exception:
                 log.exception("MQTT heartbeat failed")

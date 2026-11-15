@@ -10,6 +10,7 @@ import * as debugLog from "./pages/debug-log.js";
 import * as accounts from "./pages/accounts.js";
 import * as about from "./pages/about.js";
 import * as timeLocation from "./pages/time-location.js";
+import * as identity from "./pages/identity.js";
 import * as mqttPage from "./pages/mqtt.js";
 import * as rfidSetup from "./pages/rfid-setup.js";
 import * as tagsPage from "./pages/tags.js";
@@ -21,7 +22,7 @@ import * as placeholder from "./pages/placeholder.js";
 const PAGES = { "/dashboard": dashboard, "/site": site, "/hardware/usb": usbDevices,
                 "/hardware/badges": badgeReaders, "/hardware/storage": storagePage,
                 "/dev/debug-log": debugLog, "/system/accounts": accounts,
-                "/system/about": about, "/system/time": timeLocation,
+                "/system/about": about, "/system/identity": identity, "/system/time": timeLocation,
                 "/integrations/mqtt": mqttPage, "/hardware/rfid": rfidSetup,
                 "/operations/tags": tagsPage, "/data/tables": dataTables };
 
@@ -70,7 +71,7 @@ async function loadSession() {
   ctx.menus = menu.menus;
   ctx.menuIndex = indexMenu(menu.menus);
 
-  $("reader-name").textContent = session.reader.name;
+  $("reader-name").textContent = session.reader.crib ? `Crib ${session.reader.crib} · ${session.reader.name}` : session.reader.name;
   $("role-badge").textContent = `${session.user} · ${session.role_label}`;
   $("role-badge").title = `Signed in as ${session.user} (${session.role_label})`;
   buildMenubar($("mainnav"), menu.menus);

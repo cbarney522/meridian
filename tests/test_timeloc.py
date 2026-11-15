@@ -52,6 +52,16 @@ class SiteTests(unittest.TestCase):
         _, e = timeloc.validate_site({"latitude": 10})
         self.assertIn("both", e[0])
 
+    def test_crib_number(self):
+        for given, want in (("1204", 1204), (7, 7), ("9999", 9999), ("", None), (None, None)):
+            s, e = timeloc.validate_site({"crib_number": given})
+            self.assertEqual((e, s["crib_number"]), ([], want), given)
+        for bad in ("0042", "0", "10000", "12a", -5, True, "1 2"):
+            s, e = timeloc.validate_site({"crib_number": bad})
+            self.assertEqual(len(e), 1, bad)
+            self.assertIn("Crib number", e[0])
+            self.assertIsNone(s["crib_number"])
+
     def test_zones(self):
         z = timeloc.available_zones()
         self.assertIn("America/New_York", z)

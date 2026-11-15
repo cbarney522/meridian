@@ -281,10 +281,10 @@ Meridian calls `https://localhost/api/v1/system`, `/system/image`, `/system/regi
 | Method | Path | Permission | Notes |
 |---|---|---|---|
 | GET | `/api/time` | system.view | `utc`, `local` (ISO, site zone), `timezone`, `tz_abbrev`, `utc_offset`, `tz_database` (false = only UTC available), `ntp` {available, tracking {reference, stratum, ref_time, offset_ms, update_interval_s, leap, synced}, sources [{name, state, selected, stratum, reach, last_rx_s, offset_ms}]} from `chronyc -c -n`, `sun` {date, sunrise, sunset, day_length} in site time or null, `reader_ntp_config` (raw, if the reader API exposes one). |
-| GET | `/api/site-settings` | system.view | `{revision, settings, zones, common_zones}`. settings: `site_id`, `site_name`, `location`, `timezone`, `clock_24h`, `latitude`, `longitude`. |
+| GET | `/api/site-settings` | system.view | `{revision, settings, zones, common_zones}`. settings: `crib_number` (1–9999 or null; no leading zeros), `site_id`, `site_name`, `location`, `timezone`, `clock_24h`, `latitude`, `longitude`. |
 | PUT | `/api/site-settings` | system.edit | `{revision, settings}` → 400 `invalid` with `details`, 409 `conflict`. |
 
-The reader's clock stays on UTC and is set by chronyd; Meridian can't change the system time zone or NTP servers (no root). It applies the site time zone itself. `site_name` replaces the hostname as the reader name in the top bar, `/api/status` and `/api/session`; `site_id` is `reader.site`. The CAP bundles a time-zone database (`zoneinfo/`, from the build machine's tzdata) used when the reader has none (`PYTHONTZPATH`).
+The reader's clock stays on UTC and is set by chronyd; Meridian can't change the system time zone or NTP servers (no root). It applies the site time zone itself. `site_name` replaces the hostname as the reader name in the top bar, `/api/status` and `/api/session`; `site_id` is `reader.site`; `crib_number` is `reader.crib` in `/api/status` and `/api/session`, `crib` in the MQTT status message, and `crib` in every MQTT event. The same settings are edited on two pages: System › Identity (crib number, site ID, reader name, location) and System › Time & location (time zone, clock format, coordinates); a change to the name, location or crib number republishes the retained MQTT status at once. The CAP bundles a time-zone database (`zoneinfo/`, from the build machine's tzdata) used when the reader has none (`PYTHONTZPATH`).
 
 ## MQTT (Integrations › MQTT)
 

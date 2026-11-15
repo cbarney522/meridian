@@ -100,7 +100,7 @@ def wait(pred, timeout=8):
     return False
 
 
-IDENT = {"reader": "37025501450", "site": "plant-atl", "name": "Crib 2", "version": "0.1.1", "ip": "10.0.0.5"}
+IDENT = {"reader": "37025501450", "crib": 1204, "site": "plant-atl", "name": "Crib 2", "version": "0.1.1", "ip": "10.0.0.5"}
 
 
 @unittest.skipUnless(MOSQUITTO, "mosquitto not installed")
@@ -123,7 +123,7 @@ class MqttTests(unittest.TestCase):
         raise ValueError(f"unknown command '{name}'")
 
     def settings(self, **kw):
-        return dict(mqtt_link.DEFAULTS, enabled=True, host="127.0.0.1", port=self.broker.port, heartbeat_s=10, **kw)
+        return {**mqtt_link.DEFAULTS, "enabled": True, "host": "127.0.0.1", "port": self.broker.port, "heartbeat_s": 10, **kw}
 
     def test_status_events_commands(self):
         self.link.apply(self.settings())
@@ -133,6 +133,7 @@ class MqttTests(unittest.TestCase):
         self.link.publish_event("usb_attached", {"port": "1-1.2"})
         t, payload, _ = self.w.wait_for(lambda m: m[0].endswith("/evt/usb_attached"))
         self.assertEqual(json.loads(payload)["port"], "1-1.2")
+        self.assertEqual(json.loads(payload)["crib"], 1204)
         # command to this reader, then a broadcast, then an unknown one
         self.w.send("meridian/plant-atl/37025501450/cmd/ping", {"id": "a1"})
         self.w.send("meridian/plant-atl/all/cmd/ping", {"id": "a2"})
@@ -184,6 +185,15 @@ class MqttTests(unittest.TestCase):
         self.assertTrue(wait(lambda: self.link.connected))
         ident["reader"] = "37025501450"          # serial number arrived
         self.w.wait_for(lambda m: m[0] == "meridian/plant-atl/37025501450/status" and "online" in m[1], 15)
+
+    def test_crib_change_republishes_status(self):
+        ident = dict(IDENT)
+        self.link.identity = lambda: dict(ident)
+        self.link.apply(self.settings(heartbeat_s=300))
+        self.assertTrue(wait(lambda: self.link.connected))
+        self.w.wait_for(lambda m: m[0].endswith("/status") and '"crib":1204' in m[1])
+        ident["crib"] = 88                       # same topics, new crib number
+        self.w.wait_for(lambda m: m[0].endswith("/status") and '"crib":88' in m[1], 15)
 
 
 @unittest.skipUnless(MOSQUITTO, "mosquitto not installed")

@@ -203,7 +203,8 @@ class App:
     def mqtt_identity(self):
         it = (getattr(self, "reader_cache", None) or {}).get("items", {})
         site = self.site()
-        return {"reader": it.get("serial") or socket.gethostname(), "site": site.get("site_id") or None,
+        return {"reader": it.get("serial") or socket.gethostname(), "crib": site.get("crib_number"),
+                "site": site.get("site_id") or None,
                 "name": site.get("site_name") or socket.gethostname(), "location": site.get("location") or None,
                 "version": app_version(), "firmware": it.get("firmware"), "ip": netinfo.summary()["ipv4"],
                 "uptime_s": int(read_first("/proc/uptime", float) or 0)}
@@ -557,6 +558,7 @@ class App:
         return {
             "reader": {"name": self.site().get("site_name") or socket.gethostname(), "hostname": socket.gethostname(),
                        "serial": it.get("serial"), "site": self.site().get("site_id") or None,
+                       "crib": self.site().get("crib_number"),
                        "clock_24h": info["clock_24h"], "firmware": it.get("firmware"),
                        "app_version": app_version(), "profile": None,
                        "description": it.get("description"), "region": it.get("region"),
@@ -814,7 +816,8 @@ class Handler(BaseHTTPRequestHandler):
                 "permissions": sorted(APP.access.permissions_for(role)),
                 "must_change_password": self.account["must_change"],
                 "dev_mode": False, "roles": [],
-                "reader": {"name": APP.site().get("site_name") or socket.gethostname(), "serial": None},
+                "reader": {"name": APP.site().get("site_name") or socket.gethostname(), "serial": None,
+                           "crib": APP.site().get("crib_number")},
                 "app_version": app_version(),
             })
         if p == "/api/menu":

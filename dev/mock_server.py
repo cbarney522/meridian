@@ -42,7 +42,7 @@ ACCESS = Access()
 STATE = {"role": "developer", "user": "cliff"}
 # Accounts use the real core.config.Store, in a throwaway folder, seeded with a few examples.
 ACCOUNTS = Store(tempfile.mkdtemp(prefix="meridian-accounts-"))
-SITE = {"revision": 0, "settings": dict(timeloc.SITE_DEFAULTS, site_id="plant-atl", site_name="Crib 2 portal",
+SITE = {"revision": 0, "settings": dict(timeloc.SITE_DEFAULTS, crib_number=42, site_id="plant-atl", site_name="Crib 2 portal",
                                         location="Building 2, tool crib", timezone="America/New_York",
                                         latitude=34.0656, longitude=-84.6769)}
 
@@ -153,6 +153,7 @@ class Sim:
         return {
             "reader": {"name": SITE["settings"]["site_name"] or "impinj-17-1b-e6", "hostname": "impinj-17-1b-e6",
                        "serial": "37017090614", "site": SITE["settings"]["site_id"] or None,
+                       "crib": SITE["settings"]["crib_number"],
                        "clock_24h": SITE["settings"]["clock_24h"],
                        "firmware": "10.4.0.240", "app_version": "0.1.0-dev", "profile": "tool-crib-portal",
                        "description": "Impinj R700 RAIN RFID Reader rev 2", "region": "FCC Part 15.247",
@@ -178,7 +179,7 @@ MQTT_CFG = {"revision": 0, "settings": dict(mqtt_link.DEFAULTS)}
 
 def mock_identity():
     st = SITE["settings"]
-    return {"reader": "37025501450", "site": st["site_id"] or None, "name": st["site_name"] or "impinj-17-1b-e6",
+    return {"reader": "37025501450", "crib": st["crib_number"], "site": st["site_id"] or None, "name": st["site_name"] or "impinj-17-1b-e6",
             "location": st["location"] or None, "version": "0.1.0-dev", "firmware": "10.4.0.240",
             "ip": "192.168.0.188", "uptime_s": int(time.time() - STARTED) + 282441}
 
@@ -780,7 +781,8 @@ class Handler(SimpleHTTPRequestHandler):
                 "dev_mode": True,
                 "roles": [{"id": k, "label": v["label"], "description": v["description"]}
                           for k, v in ACCESS.roles.items()],
-                "reader": {"name": SITE["settings"]["site_name"] or "impinj-17-1b-e6", "serial": "37017090614"},
+                "reader": {"name": SITE["settings"]["site_name"] or "impinj-17-1b-e6", "serial": "37017090614",
+                           "crib": SITE["settings"]["crib_number"]},
             })
         if p == "/api/menu":
             return self.send_json({"menus": ACCESS.menu_for(role)})

@@ -109,6 +109,7 @@
       "groups": [
         { "label": "Reader", "items": [
           { "id": "about",   "label": "About this reader", "route": "/system/about",    "perm": "system.view" },
+          { "id": "identity","label": "Identity",          "route": "/system/identity", "perm": "system.view" },
           { "id": "time",    "label": "Time & location",   "route": "/system/time",     "perm": "system.view" },
           { "id": "network", "label": "Network",           "route": "/system/network",  "perm": "system.view" }
         ]},

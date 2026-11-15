@@ -14,9 +14,10 @@ try:
 except ImportError:          # pragma: no cover
     zoneinfo = None
 
-SITE_DEFAULTS = {"site_id": "", "site_name": "", "location": "", "timezone": "UTC",
+SITE_DEFAULTS = {"crib_number": None, "site_id": "", "site_name": "", "location": "", "timezone": "UTC",
                  "clock_24h": False, "latitude": None, "longitude": None}
 SITE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+CRIB_RE = re.compile(r"^[1-9][0-9]{0,3}$")      # 1-9999, no leading zeros
 COMMON_ZONES = ["America/New_York", "America/Chicago", "America/Denver", "America/Phoenix",
                 "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu", "America/Toronto",
                 "America/Mexico_City", "Europe/London", "Europe/Berlin", "Asia/Shanghai", "UTC"]
@@ -71,6 +72,11 @@ def validate_site(body):
     if not isinstance(body, dict):
         return None, ["Settings must be an object."]
     out = dict(SITE_DEFAULTS)
+    crib = body.get("crib_number")
+    crib = "" if crib is None else "x" if isinstance(crib, bool) else str(crib).strip()
+    if crib and not CRIB_RE.match(crib):
+        errors.append("Crib number: 1 to 9999, digits only, no leading zeros.")
+    out["crib_number"] = int(crib) if crib and CRIB_RE.match(crib) else None
     sid = str(body.get("site_id") or "").strip().lower()
     if sid and not SITE_ID_RE.match(sid):
         errors.append("Site ID: lowercase letters, digits and dashes, up to 40 characters (it's used in MQTT topics).")
