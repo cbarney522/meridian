@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Tiny webhook receiver for testing Meridian's HTTP / webhooks page. Standard library only.
 
-    python dev/webhook_receiver.py --secret whsec_...          # listens on port 8765
-    python dev/webhook_receiver.py --secret whsec_... --fail   # answers 500, to watch retries
+    python3 dev/webhook_receiver.py --secret whsec_...          # listens on port 8765
+    python3 dev/webhook_receiver.py --secret whsec_... --fail   # answers 500, to watch retries
+    (on Windows PowerShell, "py" works where "python3" doesn't)
 
 In Meridian, set the endpoint URL to http://<this PC's IP>:8765/ (find the IP with ipconfig on
 Windows). Windows may ask to allow Python through the firewall the first time: allow it on
 private networks. Each event is printed with whether its signature checks out.
+
+Run it with Windows Python, not inside WSL. WSL passes "localhost" through to Windows but not the
+PC's LAN address, so the reader gets "connection refused". Opening http://<this PC's IP>:8765/ in
+a browser should show "Unsupported method ('GET')": that means it's listening and reachable.
 """
 import argparse
 import hashlib

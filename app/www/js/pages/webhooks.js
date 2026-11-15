@@ -214,8 +214,10 @@ export function render(root, ctx) {
     h("p", { class: "hint", style: { marginTop: "10px" } },
       "Answer with any 2xx status to accept. Anything else, no answer, or a redirect is retried after 30 s, 2 min, 10 min, 30 min, then hourly, ",
       "for up to 24 hours. While a receiver is failing its later events wait, so they arrive in order. ",
-      "For a quick test on your PC, run ", h("code", {}, "python dev/webhook_receiver.py --secret <secret>"), " from the Meridian repo ",
-      "and use http://<your PC's IP>:8765/ as the URL."));
+      "For a quick test on your PC, run ", h("code", {}, "python3 dev/webhook_receiver.py --secret <secret>"),
+      " (or ", h("code", {}, "py"), " on Windows) from the Meridian repo and use http://<your PC's IP>:8765/ as the URL. ",
+      "Run it with Windows Python, not inside WSL: WSL isn't reachable from other devices without port forwarding. ",
+      "A browser opening that address should show “Unsupported method ('GET')”, which means it's listening."));
 
   // ---------- save
   function changed() {
