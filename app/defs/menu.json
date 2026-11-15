@@ -25,7 +25,8 @@
       "id": "hardware", "label": "Hardware",
       "groups": [
         { "label": "RFID", "items": [
-          { "id": "rfid",     "label": "Inventory & zones", "route": "/hardware/rfid",     "perm": "rfid.view" }
+          { "id": "rfid",     "label": "Inventory & zones", "route": "/hardware/rfid",     "perm": "rfid.view" },
+          { "id": "taghealth","label": "RFID Tag Health",   "route": "/hardware/tag-health", "perm": "rfid.view" }
         ]},
         { "label": "I/O", "items": [
           { "id": "iomap",  "label": "I/O map",       "route": "/hardware/io-map", "perm": "hardware.view" },
