@@ -325,6 +325,28 @@ Defined in `app/defs/events.json` (also returned as `event_types` by `GET /api/m
 | `rule_fired` | planned | A configured rule's conditions were met and its actions ran. | `{"type":"rule_fired","rule":"Door held open","detail":"door_1 open > 30 s: buzzer on","ts":"2026-11-14T08:17:45"}` |
 | `storage_changed` | planned | The USB data drive was inserted, removed or became unwritable. | `{"type":"storage_changed","action":"removed","port":"1-1.2","ts":"2026-11-14T09:02:10"}` |
 
+
+## Webhooks (Integrations › HTTP / webhooks)
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/webhooks` | integrations.view | `{revision, settings, status, event_types}`. settings.endpoints[]: `id`, `name`, `url`, `enabled`, `events` (`["*"]` = all, including future types), `verify_cert`, `timeout_s` (2–30), `secret` (null unless the caller has integrations.edit). status: `dropped`, `endpoints{id: {state (ok / failing / idle / off), pending, delivered, failed, last_ok_at, last_error, retry_in_s}}`. |
+| PUT | `/api/webhooks` | integrations.edit | `{revision, settings}`. Up to 5 endpoints. A new endpoint gets a secret; `regenerate_secret: true` replaces one. 400 `invalid` with `details`, 409 `conflict`. Removing an endpoint drops its waiting deliveries. |
+| GET | `/api/webhooks/deliveries?endpoint=&limit=` | integrations.view | Newest first (default 100, max 500): `id`, `event_id`, `endpoint_id`, `endpoint`, `type`, `body`, `status` (pending / delivered / failed), `attempts`, `created`, `next_at`, `last_at`, `last_code`, `last_error`, `last_ms`, `response`. Kept 7 days. |
+| POST | `/api/webhooks/test` | integrations.edit | `{endpoint}` → sends a `test` event now with the saved settings: `{ok, code, ms, error, response, event}`. Logged. |
+| POST | `/api/webhooks/resend` | integrations.edit | `{delivery}` → queues a copy with the same event id. |
+| POST | `/api/webhooks/retry` | integrations.edit | `{endpoint}` → everything waiting for it becomes due now. |
+
+Every bus event that MQTT forwards (same types, `badge_raw` sent as `badge`) is POSTed to each enabled endpoint subscribed to its type:
+
+```json
+{"id": "evt_…", "type": "badge", "time": "2026-11-15T21:20:05Z",
+ "reader": {"serial": "37025501450", "crib": 1204, "site": "plant-atl", "name": "Crib 2 portal"},
+ "data": { …the event's fields, as in the MQTT payload… }}
+```
+
+Headers: `X-Meridian-Event`, `X-Meridian-Delivery` (event id; unchanged on retry or resend), `X-Meridian-Timestamp` (Unix seconds), `X-Meridian-Signature` = `sha256=` + hex HMAC-SHA256 of `<timestamp>.<body>` keyed with the endpoint secret. 2xx accepts; anything else, a timeout or a redirect is retried after 30 s, 2 min, 10 min, 30 min, then hourly, and marked failed after 24 h. While an endpoint is failing its later deliveries wait (order kept). The queue lives in `rw_dir/webhooks.db` and survives restarts; at most 10,000 waiting per endpoint (oldest dropped, counted in `dropped`). `dev/webhook_receiver.py` is a test receiver that prints events and checks signatures.
+
 ## Live events stream
 
 `GET /api/events` (dashboard.view) is Server-Sent Events. Every event is a plain `data:` message (no `event:` name) with an `id:`, so clients get new types without changes. A fresh connection first receives up to the last 30 events with `"replay": true`. A reconnect that sends `Last-Event-ID` receives only what it missed. The browser keeps the last 100 events per tab; the Dashboard shows them on open (pages that react to events, such as USB devices, Storage and Badge readers, ignore replays).

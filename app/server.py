@@ -35,7 +35,7 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
-from core import accounts_api, netinfo, timeloc, mqtt_link, rfid, db as dbmod  # noqa: E402
+from core import accounts_api, netinfo, timeloc, mqtt_link, rfid, webhooks, db as dbmod  # noqa: E402
 from core.readerapi import ApiError  # noqa: E402
 from core.readerapi import ReaderApi  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
@@ -130,6 +130,11 @@ class App:
         self.mqtt = mqtt_link.MqttLink(self.mqtt_identity, self.mqtt_command, self.bus.emit)
         threading.Thread(target=self._mqtt_start, daemon=True, name="mqtt-start").start()
         threading.Thread(target=self._mqtt_bridge, daemon=True, name="mqtt-bridge").start()
+        self.webhooks = webhooks.Webhooks(os.path.join(self.args.data_dir, "webhooks.db"), self.mqtt_identity,
+                                          f"Meridian/{app_version()}")
+        self.webhooks.apply(self.store.get("webhooks", webhooks.DEFAULTS)[1])
+        self.webhooks.start()
+        threading.Thread(target=self._webhook_bridge, daemon=True, name="webhook-bridge").start()
         if not self.args.no_badges:
             self.badges = BadgeListener(self.sysfs, self.args.dev_root, self.usb_assignments,
                                         self.badge_settings, self.bus.emit)
@@ -256,6 +261,35 @@ class App:
                     continue
                 data = {k: v for k, v in ev.items() if k not in ("id", "type")}
                 self.mqtt.publish_event(self.MQTT_RENAME.get(ev["type"], ev["type"]), data)
+
+    # -- webhooks (Integrations › HTTP / webhooks)
+    WEBHOOK_TYPES = [e["type"] for e in EVENT_TYPES]
+
+    def _webhook_bridge(self):
+        last = self.bus.seq
+        while True:
+            for ev in self.bus.since(last, 30):
+                last = max(last, ev["id"])
+                if ev["type"] in self.MQTT_SKIP:
+                    continue
+                data = {k: v for k, v in ev.items() if k not in ("id", "type")}
+                self.webhooks.enqueue(self.MQTT_RENAME.get(ev["type"], ev["type"]), data)
+
+    def webhook_view(self, can_edit):
+        rev, cfg = self.store.get("webhooks", webhooks.DEFAULTS)
+        return {"revision": rev, "settings": webhooks.public(cfg, can_edit), "status": self.webhooks.status(),
+                "event_types": EVENT_TYPES}
+
+    def webhook_save(self, revision, body):
+        _, cur = self.store.get("webhooks", webhooks.DEFAULTS)
+        clean, errors = webhooks.validate(body, cur, self.WEBHOOK_TYPES)
+        if errors:
+            return 400, {"error": "invalid", "details": errors}
+        rev = self.store.put("webhooks", revision, clean)
+        if rev is None:
+            return 409, {"error": "conflict"}
+        self.webhooks.apply(clean)
+        return 200, {"ok": True, "revision": rev}
 
     def mqtt_save(self, revision, body):
         _, cur = self.mqtt_settings()
@@ -861,6 +895,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.require("rfid.view"):
                 self.send_json(APP.rfid_view(refresh="refresh=1" in (urlparse(self.path).query or "")))
             return
+        if p == "/api/webhooks":
+            if self.require("integrations.view"):
+                self.send_json(APP.webhook_view(self.can("integrations.edit")))
+            return
+        if p == "/api/webhooks/deliveries":
+            if self.require("integrations.view"):
+                q = parse_qs(urlparse(self.path).query)
+                self.send_json({"deliveries": APP.webhooks.deliveries((q.get("endpoint") or [None])[0],
+                                                                      (q.get("limit") or [100])[0])})
+            return
         if p == "/api/mqtt":
             if self.require("integrations.view"):
                 rev, cfg = APP.mqtt_settings()
@@ -927,6 +971,15 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError):
                 return self.send_json({"error": "bad_request"}, 400)
             status, result = APP.rfid_save(body.get("revision"), body.get("settings"))
+            return self.send_json(result, status)
+        if p == "/api/webhooks":
+            if not self.require("integrations.edit"):
+                return
+            try:
+                body = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({"error": "bad_request"}, 400)
+            status, result = APP.webhook_save(body.get("revision"), body.get("settings"))
             return self.send_json(result, status)
         if p == "/api/mqtt":
             if not self.require("integrations.edit"):
@@ -1010,6 +1063,17 @@ class Handler(BaseHTTPRequestHandler):
                 hint = " Check the reader login on System › About this reader." if e.code in (401, 403) else ""
                 return self.send_json({"error": "reader", "details": [f"The reader refused: {e}.{hint}"]}, 502)
             return self.send_json({"ok": True, "status": APP.rfid.status()})
+        if p in ("/api/webhooks/test", "/api/webhooks/resend", "/api/webhooks/retry"):
+            if not self.require("integrations.edit"):
+                return
+            try:
+                if p.endswith("/test"):
+                    return self.send_json(APP.webhooks.test(str(body.get("endpoint") or "")))
+                if p.endswith("/resend"):
+                    return self.send_json({"ok": True, "delivery": APP.webhooks.resend(int(body.get("delivery") or 0))})
+                return self.send_json({"ok": True, "due_now": APP.webhooks.retry_now(str(body.get("endpoint") or ""))})
+            except (ValueError, TypeError) as e:
+                return self.send_json({"error": "invalid", "details": [str(e)]}, 400)
         if p == "/api/mqtt/test":
             if not self.require("integrations.edit"):
                 return

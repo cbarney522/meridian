@@ -30,7 +30,7 @@ log = logging.getLogger("meridian.mock")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb, badges, storage, accounts_api, timeloc, mqtt_link, rfid, db as dbmod  # noqa: E402
+from core import usb, badges, storage, accounts_api, timeloc, mqtt_link, rfid, webhooks, db as dbmod  # noqa: E402
 from core.readerapi import ReaderApi, ApiError  # noqa: E402
 from core.config import Store  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
@@ -104,10 +104,12 @@ class Sim:
             ev = {"id": self.seq, "type": etype, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **data}
             self.events.append(ev)
             self.lock.notify_all()
-        link = globals().get("MQTT")
-        if link and etype not in ("mqtt_state", "identify"):
-            link.publish_event({"badge_raw": "badge"}.get(etype, etype),
-                               {k: v for k, v in ev.items() if k not in ("id", "type")})
+        if etype not in ("mqtt_state", "identify"):
+            name, data = {"badge_raw": "badge"}.get(etype, etype), {k: v for k, v in ev.items() if k not in ("id", "type")}
+            for sink in ("MQTT", "WEBHOOKS"):
+                obj = globals().get(sink)
+                if obj:
+                    (obj.publish_event if sink == "MQTT" else obj.enqueue)(name, data)
 
     def run(self):
         while True:
@@ -212,6 +214,14 @@ def mock_command(name, args):
 
 
 MQTT = mqtt_link.MqttLink(mock_identity, mock_command, SIM.emit)
+
+# Webhooks: the real sender and queue, in a temporary file
+with open(os.path.join(ROOT, "app", "defs", "events.json"), encoding="utf-8") as _f:
+    EVENT_TYPES = json.load(_f)["events"]
+WEBHOOK_CFG = {"revision": 0, "settings": dict(webhooks.DEFAULTS)}
+WEBHOOKS = webhooks.Webhooks(os.path.join(tempfile.mkdtemp(prefix="meridian-wh-"), "webhooks.db"), mock_identity,
+                             "Meridian/mock")
+WEBHOOKS.start()
 
 # Database: the real module, in a temporary file (CSV imports go here)
 DB = dbmod.Database(os.path.join(tempfile.mkdtemp(prefix="meridian-db-"), "meridian.db"),
@@ -828,6 +838,17 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json({"revision": RFID_CFG["revision"], "settings": RFID_CFG["settings"],
                                 "status": RFID.status(), "presets": RFID.presets_cache})
             return
+        if p == "/api/webhooks":
+            if self.require("integrations.view"):
+                self.send_json({"revision": WEBHOOK_CFG["revision"],
+                                "settings": webhooks.public(WEBHOOK_CFG["settings"], ACCESS.can(STATE["role"], "integrations.edit")),
+                                "status": WEBHOOKS.status(), "event_types": EVENT_TYPES})
+            return
+        if p == "/api/webhooks/deliveries":
+            if self.require("integrations.view"):
+                q = parse_qs(url.query)
+                self.send_json({"deliveries": WEBHOOKS.deliveries((q.get("endpoint") or [None])[0], (q.get("limit") or [100])[0])})
+            return
         if p == "/api/mqtt":
             if self.require("integrations.view"):
                 with open(os.path.join(ROOT, "app", "defs", "events.json"), encoding="utf-8") as f:
@@ -908,6 +929,18 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path).path
+        if p in ("/api/webhooks/test", "/api/webhooks/resend", "/api/webhooks/retry"):
+            if not self.require("integrations.edit"):
+                return
+            body = self.read_json()
+            try:
+                if p.endswith("/test"):
+                    return self.send_json(WEBHOOKS.test(str(body.get("endpoint") or "")))
+                if p.endswith("/resend"):
+                    return self.send_json({"ok": True, "delivery": WEBHOOKS.resend(int(body.get("delivery") or 0))})
+                return self.send_json({"ok": True, "due_now": WEBHOOKS.retry_now(str(body.get("endpoint") or ""))})
+            except (ValueError, TypeError) as e:
+                return self.send_json({"error": "invalid", "details": [str(e)]}, HTTPStatus.BAD_REQUEST)
         if p == "/api/accounts" or p.startswith("/api/accounts/"):
             return self.accounts("POST")
         if p.startswith("/api/data/tables/"):
@@ -1003,6 +1036,19 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_PUT(self):
         p = urlparse(self.path).path
+        if p == "/api/webhooks":
+            if not self.require("integrations.edit"):
+                return
+            body = self.read_json()
+            if body.get("revision") != WEBHOOK_CFG["revision"]:
+                return self.send_json({"error": "conflict"}, HTTPStatus.CONFLICT)
+            clean, errors = webhooks.validate(body.get("settings"), WEBHOOK_CFG["settings"], [e["type"] for e in EVENT_TYPES])
+            if errors:
+                return self.send_json({"error": "invalid", "details": errors}, HTTPStatus.BAD_REQUEST)
+            WEBHOOK_CFG["settings"] = clean
+            WEBHOOK_CFG["revision"] += 1
+            WEBHOOKS.apply(clean)
+            return self.send_json({"ok": True, "revision": WEBHOOK_CFG["revision"]})
         if p.startswith("/api/accounts/"):
             return self.accounts("PUT")
         if p == "/api/rfid":
