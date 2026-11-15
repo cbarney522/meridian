@@ -99,6 +99,7 @@
         ]},
         { "label": "Storage", "items": [
           { "id": "tables", "label": "Database tables", "route": "/data/tables",  "perm": "data.view" },
+          { "id": "dbmap", "label": "DB Import Mapping", "route": "/data/import-mapping", "perm": "data.import" },
           { "id": "export", "label": "Export & logs",   "route": "/data/export",  "perm": "data.export" }
         ]}
       ]
