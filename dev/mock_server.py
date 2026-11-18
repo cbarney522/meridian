@@ -30,7 +30,7 @@ log = logging.getLogger("meridian.mock")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 from core.access import Access  # noqa: E402
-from core import usb, badges, storage, accounts_api, timeloc, mqtt_link, rfid, webhooks, db as dbmod  # noqa: E402
+from core import usb, badges, storage, accounts_api, timeloc, mqtt_link, rfid, webhooks, nettools, db as dbmod  # noqa: E402
 from core.readerapi import ReaderApi, ApiError  # noqa: E402
 from core.config import Store  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "dev"))
@@ -844,6 +844,11 @@ class Handler(SimpleHTTPRequestHandler):
                                 "settings": webhooks.public(WEBHOOK_CFG["settings"], ACCESS.can(STATE["role"], "integrations.edit")),
                                 "status": WEBHOOKS.status(), "event_types": EVENT_TYPES})
             return
+        if p == "/api/net/status":
+            if self.require("network.diag"):
+                self.send_json(dict(nettools.status(), targets=nettools.targets_from(MQTT_CFG["settings"], WEBHOOK_CFG["settings"]),
+                                    common_ports=nettools.COMMON_PORTS))
+            return
         if p == "/api/webhooks/deliveries":
             if self.require("integrations.view"):
                 q = parse_qs(url.query)
@@ -929,6 +934,23 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path).path
+        if p in ("/api/net/port", "/api/net/dns", "/api/net/ping", "/api/net/checks"):
+            if not self.require("network.diag"):
+                return
+            body, kind = self.read_json(), p.rsplit("/", 1)[1]
+            try:
+                if kind == "port":
+                    out = nettools.port_test(body.get("host"), body.get("port"), bool(body.get("tls")), body.get("timeout") or 5)
+                elif kind == "dns":
+                    out = nettools.dns_lookup(body.get("name"))
+                elif kind == "ping":
+                    out = nettools.ping(body.get("host"))
+                else:
+                    out = {"checks": nettools.quick_checks(nettools.targets_from(MQTT_CFG["settings"], WEBHOOK_CFG["settings"]),
+                                                           timeloc.ntp_status())}
+            except ValueError as e:
+                return self.send_json({"error": "invalid", "details": [str(e)]}, HTTPStatus.BAD_REQUEST)
+            return self.send_json(out)
         if p in ("/api/webhooks/test", "/api/webhooks/resend", "/api/webhooks/retry"):
             if not self.require("integrations.edit"):
                 return

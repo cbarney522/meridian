@@ -127,6 +127,17 @@
       ]
     },
     {
+      "id": "help", "label": "Help",
+      "groups": [
+        { "label": "User Manual", "items": [
+          { "id": "manual", "label": "User manual", "route": "/help/manual", "perm": "help.view" }
+        ]},
+        { "label": "Troubleshooting", "items": [
+          { "id": "nettools", "label": "Network tools", "route": "/help/network", "perm": "network.diag" }
+        ]}
+      ]
+    },
+    {
       "id": "developer", "label": "Developer",
       "groups": [
         { "label": "Inspect", "items": [

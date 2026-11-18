@@ -28,7 +28,9 @@
     "audit.view":        "View the audit log",
     "license.view":      "See license status, licensee and expiry",
     "license.manage":    "Enter or replace the license",
-    "dev.tools":         "Developer tools: raw events, API explorer, debug logs, feature flags"
+    "dev.tools":         "Developer tools: raw events, API explorer, debug logs, feature flags",
+    "help.view":         "Read the user manual",
+    "network.diag":      "Run network tests from the reader (port, DNS, ping, DHCP status)"
   },
   "roles": {
     "developer": {
@@ -44,7 +46,8 @@
         "access.view", "access.manage", "tools.view",
         "integrations.view", "integrations.edit", "kiosk.view",
         "data.view", "data.export", "data.import", "system.view", "system.edit",
-        "accounts.manage", "audit.view", "license.view", "license.manage"
+        "accounts.manage", "audit.view", "license.view", "license.manage",
+        "help.view", "network.diag"
       ]
     },
     "technician": {
@@ -55,7 +58,8 @@
         "hardware.view", "hardware.edit", "io.override",
         "rules.view", "rules.edit", "access.view", "tools.view", "tools.edit",
         "integrations.view", "integrations.edit", "kiosk.view", "kiosk.edit",
-        "data.view", "data.export", "data.import", "system.view", "license.view"
+        "data.view", "data.export", "data.import", "system.view", "license.view",
+        "help.view", "network.diag"
       ]
     },
     "supervisor": {
@@ -64,12 +68,12 @@
       "permissions": [
         "dashboard.view", "site.view", "io.override", "sessions.manage",
         "access.view", "tools.view", "tools.edit", "data.view"
-      ]
+      , "help.view"]
     },
     "viewer": {
       "label": "Viewer",
       "description": "Read-only dashboards, history and audit log.",
-      "permissions": ["dashboard.view", "site.view", "data.view", "audit.view", "license.view"]
+      "permissions": ["dashboard.view", "site.view", "data.view", "audit.view", "license.view", "help.view"]
     },
     "operator": {
       "label": "Operator",

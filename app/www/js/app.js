@@ -12,6 +12,7 @@ import * as about from "./pages/about.js";
 import * as timeLocation from "./pages/time-location.js";
 import * as identity from "./pages/identity.js";
 import * as webhooksPage from "./pages/webhooks.js";
+import * as helpNetwork from "./pages/help-network.js";
 import * as mqttPage from "./pages/mqtt.js";
 import * as rfidSetup from "./pages/rfid-setup.js";
 import * as tagsPage from "./pages/tags.js";
@@ -23,7 +24,7 @@ import * as placeholder from "./pages/placeholder.js";
 const PAGES = { "/dashboard": dashboard, "/site": site, "/hardware/usb": usbDevices,
                 "/hardware/badges": badgeReaders, "/hardware/storage": storagePage,
                 "/dev/debug-log": debugLog, "/system/accounts": accounts,
-                "/system/about": about, "/system/identity": identity, "/integrations/http": webhooksPage, "/system/time": timeLocation,
+                "/system/about": about, "/system/identity": identity, "/integrations/http": webhooksPage, "/help/network": helpNetwork, "/system/time": timeLocation,
                 "/integrations/mqtt": mqttPage, "/hardware/rfid": rfidSetup,
                 "/operations/tags": tagsPage, "/data/tables": dataTables };
 

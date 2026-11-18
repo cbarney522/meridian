@@ -35,7 +35,7 @@ from core.access import Access  # noqa: E402
 from core.config import Store  # noqa: E402
 from core.inputs import BadgeListener, UsbWatcher  # noqa: E402
 from core.sessions import Sessions, Throttle  # noqa: E402
-from core import accounts_api, netinfo, timeloc, mqtt_link, rfid, webhooks, db as dbmod  # noqa: E402
+from core import accounts_api, netinfo, nettools, timeloc, mqtt_link, rfid, webhooks, db as dbmod  # noqa: E402
 from core.readerapi import ApiError  # noqa: E402
 from core.readerapi import ReaderApi  # noqa: E402
 from core.tls import ensure_tls  # noqa: E402
@@ -261,6 +261,30 @@ class App:
                     continue
                 data = {k: v for k, v in ev.items() if k not in ("id", "type")}
                 self.mqtt.publish_event(self.MQTT_RENAME.get(ev["type"], ev["type"]), data)
+
+    # -- network tools (Help › Troubleshooting › Network tools); one active test at a time
+    net_lock = threading.Lock()
+
+    def net_targets(self):
+        return nettools.targets_from(self.mqtt_settings()[1], self.store.get("webhooks", webhooks.DEFAULTS)[1])
+
+    def net_run(self, kind, body):
+        if not self.net_lock.acquire(blocking=False):
+            return 429, {"error": "busy", "details": ["Another network test is running. Try again in a few seconds."]}
+        try:
+            if kind == "port":
+                return 200, nettools.port_test(body.get("host"), body.get("port"), bool(body.get("tls")), body.get("timeout") or 5)
+            if kind == "dns":
+                return 200, nettools.dns_lookup(body.get("name"))
+            if kind == "ping":
+                return 200, nettools.ping(body.get("host"))
+            if kind == "checks":
+                return 200, {"checks": nettools.quick_checks(self.net_targets(), timeloc.ntp_status())}
+            return 404, {"error": "not_found"}
+        except ValueError as e:
+            return 400, {"error": "invalid", "details": [str(e)]}
+        finally:
+            self.net_lock.release()
 
     # -- webhooks (Integrations › HTTP / webhooks)
     WEBHOOK_TYPES = [e["type"] for e in EVENT_TYPES]
@@ -899,6 +923,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.require("integrations.view"):
                 self.send_json(APP.webhook_view(self.can("integrations.edit")))
             return
+        if p == "/api/net/status":
+            if self.require("network.diag"):
+                self.send_json(dict(nettools.status(), targets=APP.net_targets(), common_ports=nettools.COMMON_PORTS))
+            return
         if p == "/api/webhooks/deliveries":
             if self.require("integrations.view"):
                 q = parse_qs(urlparse(self.path).query)
@@ -1063,6 +1091,11 @@ class Handler(BaseHTTPRequestHandler):
                 hint = " Check the reader login on System › About this reader." if e.code in (401, 403) else ""
                 return self.send_json({"error": "reader", "details": [f"The reader refused: {e}.{hint}"]}, 502)
             return self.send_json({"ok": True, "status": APP.rfid.status()})
+        if p in ("/api/net/port", "/api/net/dns", "/api/net/ping", "/api/net/checks"):
+            if not self.require("network.diag"):
+                return
+            status, result = APP.net_run(p.rsplit("/", 1)[1], body if isinstance(body, dict) else {})
+            return self.send_json(result, status)
         if p in ("/api/webhooks/test", "/api/webhooks/resend", "/api/webhooks/retry"):
             if not self.require("integrations.edit"):
                 return

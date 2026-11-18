@@ -397,3 +397,13 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: #f5f7fa; }
 tr.detail td { background: #fafbfc; }
+
+/* network tools */
+.notice.ok { border-left-color: var(--ok, #2e7d32); }
+.notice.neutral { border-left-color: var(--line); }
+.notice .kv { margin-top: 6px; }
+.notice details summary { cursor: pointer; color: var(--muted); }
+.notice details ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+table.checks td { vertical-align: top; }
+.inline-test { display: flex; gap: 8px; align-items: center; }
+.inline-test .field { flex: 1; margin: 0; }

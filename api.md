@@ -326,6 +326,18 @@ Defined in `app/defs/events.json` (also returned as `event_types` by `GET /api/m
 | `storage_changed` | planned | The USB data drive was inserted, removed or became unwritable. | `{"type":"storage_changed","action":"removed","port":"1-1.2","ts":"2026-11-14T09:02:10"}` |
 
 
+## Network tools (Help › Troubleshooting › Network tools)
+
+All need `network.diag` (Developer, Site Admin, Technician). Only one test runs at a time; a second gets 429 `busy`. Tests go outbound from the reader; nothing is opened on the reader.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/net/status` | `{hostname, interface, interfaces[], gateways[], dns{servers, search, source}, dhcp, targets[], common_ports[]}`. interfaces[]: `name`, `mac`, `state`, `carrier`, `speed_mbps`, `duplex`, `mtu`, `ipv4`, `netmask`, `prefix`, `ipv6[]{address, prefix, scope}`, `stats`. dhcp: `{verdict, message, lease, evidence[]}`, verdict one of `dhcp` (a lease record matches the address; lease has `server`, `router`, `obtained`, `expire`, `expires_in_s`, `source`), `dhcp_likely` (a DHCP client runs or the config says DHCP, no readable lease), `static`, `apipa` (only 169.254.x.x: no DHCP server answered), `none` (no IPv4), `unknown`. targets: the MQTT broker and enabled webhook receivers this reader is set up to use. |
+| POST | `/api/net/checks` | Runs link, IP, DHCP, gateway ping, DNS, a DNS lookup and port test for each target, and time sync: `{checks: [{name, status: pass/warn/fail/info, detail}]}`. Up to ~30 s. |
+| POST | `/api/net/port` | `{host, port, tls, timeout}` (timeout 1–10 s) → `{ok, step (dns/connect/tls/done), message, addresses, address, dns_ms, connect_ms}`; with TLS also `tls_version`, `tls_ms`, `trusted`, `cert_problem`, `certificate{subject, issuer, not_after, expires_in_days, san}`. A refused connection means the path works but nothing listens; a timeout usually means a firewall. |
+| POST | `/api/net/dns` | `{name}` → `{ok, addresses[], ms, servers, message}`. |
+| POST | `/api/net/ping` | `{host}` → 4 pings with the system `ping`, if the reader has one and allows it: `{ok, available, sent, received, min_ms, avg_ms, max_ms, output, message}`. |
+
 ## Webhooks (Integrations › HTTP / webhooks)
 
 | Method | Path | Permission | Notes |
