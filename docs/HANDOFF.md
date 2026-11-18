@@ -12,7 +12,7 @@ A master CAP (Custom Application Partition) for the **Impinj R700** RFID reader,
 | Current version | **0.1.3.18** (commit 69304f4), running on the bench R700 |
 | API contract | `api.md` in the repo (every endpoint, MQTT topics, webhook format, network tools) |
 | Antenna-bank spec | `docs/antenna-banks.md` (spec only, not built; target 0.1.4.x) |
-| Hardware facts and earlier design notes | project doc `claude/meridian-design-notes.md` (RFID Discussion project; status there is from 14 Nov) |
+| Hardware facts and earlier design notes | `docs/design-notes.md` in the repo (copy of the RFID Discussion project doc; its status section is from 14 Nov) |
 | Reader data model design | Docs: **Meridian data model & observation modes** — https://claude.ai/artifact/MXYDZVkoM4yNnUv7L9LhUm |
 | Fleet manager requirements | Docs: **Meridian Fleet Manager requirements** — https://claude.ai/artifact/FdmCqXrHHfMj1wb7jkaZoF |
 
