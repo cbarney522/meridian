@@ -148,7 +148,7 @@ def dns_servers(resolv="/etc/resolv.conf"):
             if len(p) >= 2 and p[0] == "nameserver":
                 ns.append(p[1])
             elif len(p) >= 2 and p[0] in ("search", "domain"):
-                search += p[1:]
+                search += [d for d in p[1:] if d != "."]
         return ns, search
     ns, search = parse(resolv)
     via = resolv
@@ -273,7 +273,10 @@ def _nm_options_to_lease(opts, source):
         return None
     lease = {"source": source, "client": "NetworkManager", "address": addr,
              "server": opts.get("dhcp_server_identifier"), "router": (opts.get("routers") or "").split(" ")[0] or None}
+    lease["options"] = dict(sorted(opts.items()))
     life = opts.get("dhcp_lease_time")
+    if life and life.isdigit():
+        lease["lifetime_s"] = int(life)
     exp = opts.get("expiry")
     if exp and exp.isdigit():
         lease["expire"] = int(exp)

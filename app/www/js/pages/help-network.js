@@ -71,7 +71,10 @@ export function render(root) {
           kv("DHCP server", lease.server), kv("Router", lease.router),
           kv("Obtained", lease.obtained ? new Date(lease.obtained * 1000).toLocaleString() : null),
           kv("Expires", lease.expire ? new Date(lease.expire * 1000).toLocaleString() : null),
+          kv("Lease length", lease.lifetime_s ? fmtDur(lease.lifetime_s) : null),
           kv("Lease record", lease.source)) : null,
+        lease?.options ? h("details", { style: { marginTop: "8px" } }, h("summary", {}, `All DHCP options (${Object.keys(lease.options).length})`),
+          h("dl", { class: "kv" }, Object.entries(lease.options).map(([k, v]) => kv(k, v)))) : null,
         h("details", { style: { marginTop: "8px" } }, h("summary", {}, "How this was decided"),
           h("ul", {}, d.evidence.map((e) => h("li", { class: "mono" }, e))))),
       h("div", { class: "table-scroll" }, h("table", { class: "table simple" },
@@ -203,4 +206,11 @@ export function render(root) {
 
 function kv(k, v) {
   return v === null || v === undefined || v === "" ? null : [h("dt", {}, k), h("dd", { class: "mono" }, String(v))];
+}
+
+function fmtDur(s) {
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+  const d = Math.floor(s / 86400), hrs = Math.round((s % 86400) / 3600);
+  return hrs ? `${d} d ${hrs} h` : `${d} d`;
 }
