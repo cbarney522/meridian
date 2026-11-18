@@ -73,8 +73,7 @@ export function render(root) {
           kv("Expires", lease.expire ? new Date(lease.expire * 1000).toLocaleString() : null),
           kv("Lease length", lease.lifetime_s ? (lease.lifetime_s >= 4294967295 ? "Infinite (never expires)" : fmtDur(lease.lifetime_s)) : null),
           kv("Lease record", lease.source)) : null,
-        lease?.options ? h("details", { style: { marginTop: "8px" } }, h("summary", {}, `All DHCP options (${Object.keys(lease.options).length})`),
-          h("dl", { class: "kv" }, Object.entries(lease.options).flatMap(([k, v]) => kv(k, v) || []))) : null,
+        lease?.options ? dhcpOptions(lease.options) : null,
         h("details", { style: { marginTop: "8px" } }, h("summary", {}, "How this was decided"),
           h("ul", {}, d.evidence.map((e) => h("li", { class: "mono" }, e))))),
       h("div", { class: "table-scroll" }, h("table", { class: "table simple" },
@@ -213,4 +212,29 @@ function fmtDur(s) {
   if (s < 86400) return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
   const d = Math.floor(s / 86400), hrs = Math.round((s % 86400) / 3600);
   return hrs ? `${d} d ${hrs} h` : `${d} d`;
+}
+
+// DHCP option names as NetworkManager reports them -> plain labels
+const DHCP_LABELS = {
+  ip_address: "IP address", subnet_mask: "Subnet mask", broadcast_address: "Broadcast address", routers: "Router",
+  domain_name_servers: "DNS servers", domain_name: "Domain name", domain_search: "Search domains", host_name: "Host name",
+  ntp_servers: "NTP (time) servers", dhcp_server_identifier: "DHCP server", dhcp_lease_time: "Lease time (s)",
+  dhcp_renewal_time: "Renew after (s)", dhcp_rebinding_time: "Rebind after (s)", expiry: "Expires (Unix time)",
+  next_server: "Boot server (next-server)", dhcp_client_identifier: "Client ID", interface_mtu: "MTU",
+  time_offset: "Time offset", wpad: "Proxy auto-config (WPAD)", root_path: "Root path", static_routes: "Static routes",
+  rfc3442_classless_static_routes: "Classless static routes", ms_classless_static_routes: "Classless static routes (Microsoft)",
+  nis_domain: "NIS domain", nis_servers: "NIS servers",
+};
+const dhcpLabel = (k) => DHCP_LABELS[k] || k.replace(/_/g, " ");
+
+function dhcpOptions(opts) {
+  const sent = Object.entries(opts).filter(([k]) => !k.startsWith("requested_") && k !== "dhcp_client_identifier");
+  const clientId = opts.dhcp_client_identifier;
+  const asked = Object.keys(opts).filter((k) => k.startsWith("requested_")).map((k) => k.slice(10));
+  const tidy = (k, v) => (k === "domain_name_servers" || k === "ntp_servers") ? [...new Set(v.split(/\s+/))].join(", ") : v;
+  return h("details", { style: { marginTop: "8px" } }, h("summary", {}, `What the DHCP server sent (${sent.length} options)`),
+    h("dl", { class: "kv" }, sent.flatMap(([k, v]) => [h("dt", { title: k }, dhcpLabel(k)), h("dd", { class: "mono" }, tidy(k, String(v)))])),
+    asked.length || clientId ? h("details", { style: { marginTop: "8px" } }, h("summary", {}, `What the reader asked for (${asked.length} options)`),
+      clientId ? h("p", { class: "sub" }, "Client ID: ", h("span", { class: "mono" }, clientId)) : null,
+      h("p", { class: "sub" }, asked.map(dhcpLabel).sort().join(", "))) : null);
 }
