@@ -177,7 +177,10 @@ class FakeReader(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass          # the client under test hung up first: expected in some tests
 
     def do_GET(self):
         st = self.state
