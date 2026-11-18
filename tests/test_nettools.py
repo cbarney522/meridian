@@ -194,3 +194,42 @@ class QuickCheckTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NetworkManagerTests(unittest.TestCase):
+    NMCLI = ("DHCP4.OPTION[1]:dhcp_lease_time = 86400\nDHCP4.OPTION[2]:dhcp_server_identifier = 192.168.0.1\n"
+             "DHCP4.OPTION[3]:expiry = 4102444800\nDHCP4.OPTION[4]:ip_address = 192.168.0.188\n"
+             "DHCP4.OPTION[5]:routers = 192.168.0.1\n")
+
+    def test_parse(self):
+        o = nettools.parse_nmcli_dhcp4(self.NMCLI)
+        self.assertEqual((o["ip_address"], o["expiry"]), ("192.168.0.188", "4102444800"))
+
+    def test_lease_via_nmcli(self):
+        class P:
+            returncode, stdout, stderr = 0, self.NMCLI, ""
+        root = tempfile.mkdtemp()
+        orig = nettools.shutil.which
+        nettools.shutil.which = lambda n: "/usr/bin/" + n if n == "nmcli" else None
+        try:
+            d = nettools.dhcp_status("eth0", "192.168.0.188", roots={"prefix": root},
+                                     clients=[{"client": "NetworkManager", "cmdline": "/usr/sbin/NetworkManager --no-daemon"}],
+                                     nm_run=lambda args: P())
+        finally:
+            nettools.shutil.which = orig
+        self.assertEqual(d["verdict"], "dhcp")
+        self.assertEqual(d["lease"]["server"], "192.168.0.1")
+        self.assertEqual(d["lease"]["obtained"], 4102444800 - 86400)
+        self.assertTrue(any(e.startswith("nmcli:") for e in d["evidence"]))
+
+    def test_nm_unavailable_stays_likely(self):
+        root = tempfile.mkdtemp()
+        orig = nettools.shutil.which
+        nettools.shutil.which = lambda n: None
+        try:
+            d = nettools.dhcp_status("eth0", "192.168.0.188", roots={"prefix": root},
+                                     clients=[{"client": "NetworkManager", "cmdline": "/usr/sbin/NetworkManager"}])
+        finally:
+            nettools.shutil.which = orig
+        self.assertEqual(d["verdict"], "dhcp_likely")
+        self.assertIn("nmcli: not installed", d["evidence"])

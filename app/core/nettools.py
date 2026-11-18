@@ -12,6 +12,7 @@ works without root and without the reader's REST login.
 import fcntl
 import glob
 import ipaddress
+import json
 import os
 import re
 import shutil
@@ -265,6 +266,80 @@ def _lease_files(iface, roots=None):
     return leases, seen
 
 
+def _nm_options_to_lease(opts, source):
+    """NetworkManager DHCP4 options (dict of str) -> our lease dict, or None."""
+    addr = opts.get("ip_address")
+    if not addr:
+        return None
+    lease = {"source": source, "client": "NetworkManager", "address": addr,
+             "server": opts.get("dhcp_server_identifier"), "router": (opts.get("routers") or "").split(" ")[0] or None}
+    life = opts.get("dhcp_lease_time")
+    exp = opts.get("expiry")
+    if exp and exp.isdigit():
+        lease["expire"] = int(exp)
+        if life and life.isdigit():
+            lease["lifetime_s"] = int(life)
+            lease["obtained"] = int(exp) - int(life)
+    return lease
+
+
+def parse_nmcli_dhcp4(text):
+    """`nmcli -t -f DHCP4 device show eth0` lines like DHCP4.OPTION[3]:expiry = 1763500000."""
+    opts = {}
+    for line in (text or "").splitlines():
+        if line.startswith("DHCP4.OPTION") and ":" in line:
+            kv = line.split(":", 1)[1]
+            if " = " in kv:
+                k, v = kv.split(" = ", 1)
+                opts[k.strip()] = v.strip()
+    return opts
+
+
+def _nm_lease(iface, evidence, run=None):
+    """Ask NetworkManager for its DHCP lease: nmcli first, then D-Bus through busctl."""
+    run = run or (lambda args: subprocess.run(args, capture_output=True, text=True, timeout=5))
+    if not iface:
+        return None
+    if shutil.which("nmcli"):
+        try:
+            p = run(["nmcli", "-t", "-f", "DHCP4", "device", "show", iface])
+            opts = parse_nmcli_dhcp4(p.stdout)
+            if opts:
+                evidence.append(f"nmcli: {len(opts)} DHCP options for {iface}")
+                return _nm_options_to_lease(opts, "NetworkManager (nmcli)")
+            evidence.append(f"nmcli: no DHCP options for {iface}" + (f" ({p.stderr.strip()[:120]})" if p.stderr.strip() else ""))
+        except (OSError, subprocess.SubprocessError) as e:
+            evidence.append(f"nmcli failed: {e}")
+    else:
+        evidence.append("nmcli: not installed")
+    if shutil.which("busctl"):
+        try:
+            nm = ["busctl", "--system", "-j"]
+            p = run(nm + ["call", "org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager",
+                          "org.freedesktop.NetworkManager", "GetDeviceByIpIface", "s", iface])
+            dev = json.loads(p.stdout)["data"][0] if p.returncode == 0 and p.stdout.strip() else None
+            if not dev:
+                evidence.append(f"busctl: NetworkManager didn't answer for {iface}" + (f" ({p.stderr.strip()[:120]})" if p.stderr.strip() else ""))
+                return None
+            p = run(nm + ["get-property", "org.freedesktop.NetworkManager", dev,
+                          "org.freedesktop.NetworkManager.Device", "Dhcp4Config"])
+            cfg = json.loads(p.stdout)["data"] if p.returncode == 0 and p.stdout.strip() else None
+            if not cfg or cfg == "/":
+                evidence.append("busctl: NetworkManager has no DHCP4 lease for this interface")
+                return None
+            p = run(nm + ["get-property", "org.freedesktop.NetworkManager", cfg,
+                          "org.freedesktop.NetworkManager.DHCP4Config", "Options"])
+            raw = json.loads(p.stdout)["data"] if p.returncode == 0 and p.stdout.strip() else {}
+            opts = {k: str(v.get("data") if isinstance(v, dict) else v) for k, v in raw.items()}
+            evidence.append(f"busctl: {len(opts)} DHCP options from NetworkManager")
+            return _nm_options_to_lease(opts, "NetworkManager (D-Bus)")
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError) as e:
+            evidence.append(f"busctl failed: {e}")
+    else:
+        evidence.append("busctl: not installed")
+    return None
+
+
 def _configured_method(iface, roots=None):
     """What the reader's own config files say: 'dhcp', 'static' or None."""
     roots = roots or {}
@@ -290,7 +365,7 @@ def _configured_method(iface, roots=None):
     return [f for f in found if f[0]]
 
 
-def dhcp_status(iface, ipv4, roots=None, now=None, clients=None):
+def dhcp_status(iface, ipv4, roots=None, now=None, clients=None, nm_run=None):
     """Decide, from what this reader shows, whether its IPv4 address came from DHCP.
 
     Returns {"verdict", "message", "lease", "evidence": [...]}; verdicts:
@@ -311,6 +386,10 @@ def dhcp_status(iface, ipv4, roots=None, now=None, clients=None):
         evidence.append("No DHCP client process found.")
     leases, seen = _lease_files(iface, roots)
     evidence.append(f"Lease locations checked: {len(seen)} file(s) found" + (f" ({', '.join(seen[:4])}{'…' if len(seen) > 4 else ''})" if seen else ""))
+    if any(c["client"] == "NetworkManager" for c in mine) and not any(l.get("address") == ipv4 for l in leases):
+        nm = _nm_lease(iface, evidence, run=nm_run)
+        if nm:
+            leases.append(nm)
     config = _configured_method(iface, roots)
     for method, path in config:
         evidence.append(f"Config: {method} in {path}")
