@@ -233,3 +233,11 @@ class NetworkManagerTests(unittest.TestCase):
             nettools.shutil.which = orig
         self.assertEqual(d["verdict"], "dhcp_likely")
         self.assertIn("nmcli: not installed", d["evidence"])
+
+
+class InfiniteLeaseTests(unittest.TestCase):
+    def test_infinite(self):
+        l = nettools._nm_options_to_lease({"ip_address": "192.168.0.188", "dhcp_lease_time": "4294967295",
+                                           "expiry": "4294967295"}, "x")
+        self.assertTrue(l["infinite"])
+        self.assertNotIn("expire", l)

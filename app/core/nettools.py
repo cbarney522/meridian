@@ -278,6 +278,9 @@ def _nm_options_to_lease(opts, source):
     if life and life.isdigit():
         lease["lifetime_s"] = int(life)
     exp = opts.get("expiry")
+    if life == "4294967295":            # DHCP's "infinite": nothing to expire
+        lease["infinite"] = True
+        exp = None
     if exp and exp.isdigit():
         lease["expire"] = int(exp)
         if life and life.isdigit():
@@ -409,7 +412,7 @@ def dhcp_status(iface, ipv4, roots=None, now=None, clients=None, nm_run=None):
                 "message": f"Only a self-assigned address ({ipv4}). The reader asked for DHCP but no DHCP server answered. Check the network has a DHCP server, and the VLAN on the switch port."}
     if lease:
         exp = lease.get("expires_in_s")
-        when = "" if exp is None else (" Lease has expired." if exp < 0 else f" Lease expires in {_fmt_dur(exp)}.")
+        when = " The lease never expires (infinite lease time)." if lease.get("infinite") else "" if exp is None else (" Lease has expired." if exp < 0 else f" Lease expires in {_fmt_dur(exp)}.")
         srv = f" from DHCP server {lease['server']}" if lease.get("server") else ""
         return {"verdict": "dhcp", "lease": lease, "evidence": evidence,
                 "message": f"DHCP lease for {ipv4}{srv}.{when}"}
